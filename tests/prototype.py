@@ -38,7 +38,7 @@ def load_polygons_from_result(result) -> list[ShapelyPolygon]:
 
 
 def main() -> None:
-    base_dir = Path(__file__).resolve().parents[2] / "data"
+    base_dir = Path(__file__).resolve().parents[1] / "data"
 
     # Проверяем что всё на месте
     if not base_dir.exists():
