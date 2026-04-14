@@ -401,13 +401,13 @@ svg {{
 <svg id="canvas" viewBox="{vb_x} {vb_y} {vb_w} {vb_h}"
      xmlns="http://www.w3.org/2000/svg"
      preserveAspectRatio="xMidYMid meet">
-<g id="grid"></g>
   <!-- flip Y so math coords go up -->
-<g id="world" transform="scale(1,-1) translate(0, 0)">
+  <g id="world" transform="scale(1,-1) translate(0, 0)">
+      <g id="grid"></g>
       {svg_layers}
   </g>
-<!-- Подписи без отражения, но в тех же координатах -->
-<g id="labels">
+  <!-- Подписи без отражения, чтобы текст не переворачивался -->
+  <g id="labels">
       <g id="grid-labels"></g>
       {svg_labels}
   </g>
@@ -499,14 +499,18 @@ function drawGrid() {{
   const step = computeGridStep(vb.w, vb.h);
   const fontSize = Math.min(vb.w, vb.h) * 0.022;
   const yLines = computeGridYLines(vb.y, vb.h, flipOffset, step);
+  const mathYMin = flipOffset - (vb.y + vb.h);
+  const mathYMax = flipOffset - vb.y;
 
   const xStart = Math.floor(vb.x / step) * step;
   const xEnd   = Math.ceil((vb.x + vb.w) / step) * step;
 
   for (let gx = xStart; gx <= xEnd; gx += step) {{
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', gx); line.setAttribute('y1', vb.y);
-    line.setAttribute('x2', gx); line.setAttribute('y2', vb.y + vb.h);
+    line.setAttribute('x1', gx);
+    line.setAttribute('y1', mathYMin);
+    line.setAttribute('x2', gx);
+    line.setAttribute('y2', mathYMax);
     line.setAttribute('class', 'grid-line');
     grid.appendChild(line);
 
@@ -522,8 +526,10 @@ function drawGrid() {{
 
   for (const {{ mathY, svgY }} of yLines) {{
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', vb.x);      line.setAttribute('y1', svgY);
-    line.setAttribute('x2', vb.x + vb.w); line.setAttribute('y2', svgY);
+    line.setAttribute('x1', vb.x);
+    line.setAttribute('y1', mathY);
+    line.setAttribute('x2', vb.x + vb.w);
+    line.setAttribute('y2', mathY);
     line.setAttribute('class', 'grid-line');
     grid.appendChild(line);
 
