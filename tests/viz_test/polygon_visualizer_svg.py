@@ -428,26 +428,42 @@ function updateLabelScale() {{
   }});
 }}
 
+function computeGridStep(viewW, viewH) {{
+  const targetLines = 12;
+  const rawStep = Math.max(viewW, viewH) / targetLines;
+  const power = Math.floor(Math.log10(rawStep));
+  const base = 10 ** power;
+  if (rawStep / base > 5) return 10 * base;
+  if (rawStep / base > 2) return 5 * base;
+  if (rawStep / base > 1) return 2 * base;
+  return base;
+}}
+
+function computeGridYLines(viewY, viewH, currentFlipOffset, step) {{
+  const mathYMin = currentFlipOffset - (viewY + viewH);
+  const mathYMax = currentFlipOffset - viewY;
+  const yStart = Math.floor(mathYMin / step) * step;
+  const yEnd = Math.ceil(mathYMax / step) * step;
+
+  const lines = [];
+  for (let mathY = yStart; mathY <= yEnd; mathY += step) {{
+    lines.push({{ mathY, svgY: currentFlipOffset - mathY }});
+  }}
+  return lines;
+}}
+
 function drawGrid() {{
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
   const gridLabels = document.getElementById('grid-labels');
   gridLabels.innerHTML = '';
 
-  const targetLines = 12;
-  const rawStep = Math.max(vb.w, vb.h) / targetLines;
-  const power = Math.floor(Math.log10(rawStep));
-  const base = 10 ** power;
-  let step = base;
-  if (rawStep / base > 5)      step = 10 * base;
-  else if (rawStep / base > 2) step = 5 * base;
-  else if (rawStep / base > 1) step = 2 * base;
+  const step = computeGridStep(vb.w, vb.h);
+  const fontSize = Math.min(vb.w, vb.h) * 0.022;
+  const yLines = computeGridYLines(vb.y, vb.h, flipOffset, step);
 
   const xStart = Math.floor(vb.x / step) * step;
   const xEnd   = Math.ceil((vb.x + vb.w) / step) * step;
-  const yStart = Math.floor(vb.y / step) * step;
-  const yEnd   = Math.ceil((vb.y + vb.h) / step) * step;
-  const fontSize = Math.min(vb.w, vb.h) * 0.022;
 
   for (let gx = xStart; gx <= xEnd; gx += step) {{
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -466,20 +482,19 @@ function drawGrid() {{
     gridLabels.appendChild(lbl);
   }}
 
-  for (let gy = yStart; gy <= yEnd; gy += step) {{
+  for (const {{ mathY, svgY }} of yLines) {{
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', vb.x);      line.setAttribute('y1', gy);
-    line.setAttribute('x2', vb.x + vb.w); line.setAttribute('y2', gy);
+    line.setAttribute('x1', vb.x);      line.setAttribute('y1', svgY);
+    line.setAttribute('x2', vb.x + vb.w); line.setAttribute('y2', svgY);
     line.setAttribute('class', 'grid-line');
     grid.appendChild(line);
 
-    // Подпись Y: flipOffset - gy даёт математическое значение
     const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     lbl.setAttribute('x', vb.x + fontSize * 0.3);
-    lbl.setAttribute('y', gy - fontSize * 0.3);
+    lbl.setAttribute('y', svgY - fontSize * 0.3);
     lbl.setAttribute('font-size', fontSize);
     lbl.setAttribute('class', 'grid-label');
-    lbl.textContent = (flipOffset - gy).toFixed(0);
+    lbl.textContent = mathY.toFixed(0);
     gridLabels.appendChild(lbl);
   }}
 }}
