@@ -1,0 +1,49 @@
+# Python cache
+__pycache__/
+*.pyc
+*.json
+*.html
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# Data и артефакты модели
+/Data/
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.png
+*.jpg
+*.jpeg
+*.docx
+
+# Логи
+logs/
+*.log
+*.txt
+
+# OS мусор
+.DS_Store
+Thumbs.db
+
+# Pytest cache
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Большие файлы баз данных (SQLite и т.д.)
+*.db
+*.sqlite
+*.sqlite3
+*.zip
+*.rar
