@@ -130,7 +130,19 @@ def test_grid_js_does_not_use_legacy_unflipped_y_loop():
     assert "lbl.textContent = (flipOffset - gy).toFixed(0);" not in html
 
     assert re.search(r"function\s+computeGridYLines\(viewY,\s*viewH,\s*currentFlipOffset,\s*step\)", html)
-    assert re.search(r"line\.setAttribute\('y1',\s*mathYMin\)", html)
-    assert re.search(r"line\.setAttribute\('y2',\s*mathYMax\)", html)
+    assert re.search(r"const\s+GRID_OVERSCAN_FACTOR\s*=\s*10;", html)
+    assert re.search(r"const\s+gridMinX\s*=\s*vb\.x\s*-\s*vb\.w\s*\*\s*GRID_OVERSCAN_FACTOR;", html)
+    assert re.search(r"const\s+gridMaxX\s*=\s*vb\.x\s*\+\s*vb\.w\s*\+\s*vb\.w\s*\*\s*GRID_OVERSCAN_FACTOR;", html)
+    assert re.search(r"const\s+gridMinY\s*=\s*vb\.y\s*-\s*vb\.h\s*\*\s*GRID_OVERSCAN_FACTOR;", html)
+    assert re.search(r"const\s+gridMaxY\s*=\s*vb\.y\s*\+\s*vb\.h\s*\+\s*vb\.h\s*\*\s*GRID_OVERSCAN_FACTOR;", html)
+
+    assert re.search(r"line\.setAttribute\('y1',\s*mathGridYMin\)", html)
+    assert re.search(r"line\.setAttribute\('y2',\s*mathGridYMax\)", html)
+    assert re.search(r"line\.setAttribute\('x1',\s*gridMinX\)", html)
+    assert re.search(r"line\.setAttribute\('x2',\s*gridMaxX\)", html)
+
+    assert re.search(r"const\s+labelXStart\s*=\s*Math\.floor\(vb\.x\s*/\s*step\)\s*\*\s*step;", html)
+    assert re.search(r"const\s+labelXEnd\s*=\s*Math\.ceil\(\(vb\.x\s*\+\s*vb\.w\)\s*/\s*step\)\s*\*\s*step;", html)
+    assert re.search(r"for\s*\(let\s+gx\s*=\s*labelXStart;\s*gx\s*<=\s*labelXEnd;\s*gx\s*\+=\s*step\)", html)
     assert re.search(r"line\.setAttribute\('y1',\s*mathY\)", html)
     assert re.search(r"line\.setAttribute\('y2',\s*mathY\)", html)

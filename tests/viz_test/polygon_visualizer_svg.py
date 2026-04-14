@@ -496,24 +496,37 @@ function drawGrid() {{
   const gridLabels = document.getElementById('grid-labels');
   gridLabels.innerHTML = '';
 
+  const GRID_OVERSCAN_FACTOR = 10;
   const step = computeGridStep(vb.w, vb.h);
   const fontSize = Math.min(vb.w, vb.h) * 0.022;
-  const yLines = computeGridYLines(vb.y, vb.h, flipOffset, step);
-  const mathYMin = flipOffset - (vb.y + vb.h);
-  const mathYMax = flipOffset - vb.y;
+  const visibleYLines = computeGridYLines(vb.y, vb.h, flipOffset, step);
 
-  const xStart = Math.floor(vb.x / step) * step;
-  const xEnd   = Math.ceil((vb.x + vb.w) / step) * step;
+  // Overscan only for grid lines (continuous infinite-like grid effect).
+  const gridMinX = vb.x - vb.w * GRID_OVERSCAN_FACTOR;
+  const gridMaxX = vb.x + vb.w + vb.w * GRID_OVERSCAN_FACTOR;
+  const gridMinY = vb.y - vb.h * GRID_OVERSCAN_FACTOR;
+  const gridMaxY = vb.y + vb.h + vb.h * GRID_OVERSCAN_FACTOR;
+
+  const mathGridYMin = flipOffset - gridMaxY;
+  const mathGridYMax = flipOffset - gridMinY;
+  const overscannedYLines = computeGridYLines(gridMinY, gridMaxY - gridMinY, flipOffset, step);
+
+  const xStart = Math.floor(gridMinX / step) * step;
+  const xEnd = Math.ceil(gridMaxX / step) * step;
+  const labelXStart = Math.floor(vb.x / step) * step;
+  const labelXEnd = Math.ceil((vb.x + vb.w) / step) * step;
 
   for (let gx = xStart; gx <= xEnd; gx += step) {{
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     line.setAttribute('x1', gx);
-    line.setAttribute('y1', mathYMin);
+    line.setAttribute('y1', mathGridYMin);
     line.setAttribute('x2', gx);
-    line.setAttribute('y2', mathYMax);
+    line.setAttribute('y2', mathGridYMax);
     line.setAttribute('class', 'grid-line');
     grid.appendChild(line);
+  }}
 
+  for (let gx = labelXStart; gx <= labelXEnd; gx += step) {{
     const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     lbl.setAttribute('x', gx);
     lbl.setAttribute('y', vb.y + fontSize * 1.2);
@@ -524,15 +537,17 @@ function drawGrid() {{
     gridLabels.appendChild(lbl);
   }}
 
-  for (const {{ mathY, svgY }} of yLines) {{
+  for (const {{ mathY }} of overscannedYLines) {{
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', vb.x);
+    line.setAttribute('x1', gridMinX);
     line.setAttribute('y1', mathY);
-    line.setAttribute('x2', vb.x + vb.w);
+    line.setAttribute('x2', gridMaxX);
     line.setAttribute('y2', mathY);
     line.setAttribute('class', 'grid-line');
     grid.appendChild(line);
+  }}
 
+  for (const {{ mathY, svgY }} of visibleYLines) {{
     const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     lbl.setAttribute('x', vb.x + fontSize * 0.3);
     lbl.setAttribute('y', svgY - fontSize * 0.3);
