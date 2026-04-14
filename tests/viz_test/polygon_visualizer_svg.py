@@ -38,6 +38,7 @@ class PolygonVisualizerSVG:
     def __init__(self) -> None:
         self._layers: list[_Layer] = []
         self._title: str = ""
+        self._labels: list[str] = []
 
     # ── public API ──────────────────────────────────────────────
 
@@ -170,7 +171,6 @@ class PolygonVisualizerSVG:
 
                 if style.label:
                     representative_point = poly.representative_point()
-                    flip_offset = min_y + max_y
                     label_y_screen = flip_offset - representative_point.y
                     self._labels.append(
                         f'  <text x="{representative_point.x}" y="{label_y_screen}" class="poly-label"'
@@ -480,26 +480,6 @@ function drawGrid() {{
     lbl.setAttribute('font-size', fontSize);
     lbl.setAttribute('class', 'grid-label');
     lbl.textContent = (flipOffset - gy).toFixed(0);
-    gridLabels.appendChild(lbl);
-  }}
-}}
-
-  for (let mathY = yStart; mathY <= yEnd; mathY += step) {{
-    const svgY = flipOffset - mathY;
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', String(vb.x));
-    line.setAttribute('y1', String(svgY));
-    line.setAttribute('x2', String(vb.x + vb.w));
-    line.setAttribute('y2', String(svgY));
-    line.setAttribute('class', 'grid-line');
-    grid.appendChild(line);
-
-    const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    lbl.setAttribute('x', String(vb.x + fontSize * 0.3));
-    lbl.setAttribute('y', String(svgY - fontSize * 0.3));
-    lbl.setAttribute('class', 'grid-label');
-    lbl.setAttribute('font-size', String(fontSize));
-    lbl.textContent = mathY.toFixed(0);
     gridLabels.appendChild(lbl);
   }}
 }}
