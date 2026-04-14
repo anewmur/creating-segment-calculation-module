@@ -146,26 +146,6 @@ class PolygonVisualizerSVG:
             return 2 * base
         return base
 
-    @staticmethod
-    def _compute_grid_y_lines(
-        view_y: float,
-        view_height: float,
-        flip_offset: float,
-        step: float,
-    ) -> list[tuple[float, float]]:
-        """Возвращает пары (math_y, svg_y) для горизонтальных линий сетки."""
-        math_y_min = flip_offset - (view_y + view_height)
-        math_y_max = flip_offset - view_y
-        y_start = math.floor(math_y_min / step) * step
-        y_end = math.ceil(math_y_max / step) * step
-
-        count = int(round((y_end - y_start) / step))
-        lines: list[tuple[float, float]] = []
-        for idx in range(count + 1):
-            math_y = y_start + idx * step
-            lines.append((math_y, flip_offset - math_y))
-        return lines
-
     def _render_svg_layers(self, pad: float) -> str:
         parts: list[str] = []
         self._labels: list[str] = []
@@ -220,6 +200,7 @@ class PolygonVisualizerSVG:
             parts.append("</g>")
 
         return "\n".join(parts)
+
     def _render_html(self) -> str:
         min_x, min_y, max_x, max_y = self._compute_bounds()
         w = max_x - min_x or 100
@@ -248,6 +229,7 @@ class PolygonVisualizerSVG:
             svg_layers=svg_layers,
             svg_labels=svg_labels,
         )
+
     def show(self, path: str | Path) -> None:
         """Сохраняет и открывает в браузере."""
         self.save(path)
@@ -316,11 +298,6 @@ body {{
   stroke-width: 0.5;
   vector-effect: non-scaling-stroke;
 }}
-.grid-label {{
-  font-size: 11px;
-  fill: #000000;
-  font-family: 'JetBrains Mono', monospace;
-}}
 
 .vertex {{
   vector-effect: non-scaling-stroke;
@@ -381,7 +358,6 @@ svg {{
     width: 18px; height: 4px;
     border-radius: 2px;
   }}
-  /* Y‑axis is flipped in SVG (we keep math coords) */
 </style>
 </head>
 <body>
@@ -408,7 +384,6 @@ svg {{
   </g>
   <!-- Подписи без отражения, чтобы текст не переворачивался -->
   <g id="labels">
-      <g id="grid-labels"></g>
       {svg_labels}
   </g>
 </svg>
@@ -493,15 +468,10 @@ function computeGridYLines(viewY, viewH, currentFlipOffset, step) {{
 function drawGrid() {{
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
-  const gridLabels = document.getElementById('grid-labels');
-  gridLabels.innerHTML = '';
 
   const GRID_OVERSCAN_FACTOR = 10;
   const step = computeGridStep(vb.w, vb.h);
-  const fontSize = Math.min(vb.w, vb.h) * 0.022;
-  const visibleYLines = computeGridYLines(vb.y, vb.h, flipOffset, step);
 
-  // Overscan only for grid lines (continuous infinite-like grid effect).
   const gridMinX = vb.x - vb.w * GRID_OVERSCAN_FACTOR;
   const gridMaxX = vb.x + vb.w + vb.w * GRID_OVERSCAN_FACTOR;
   const gridMinY = vb.y - vb.h * GRID_OVERSCAN_FACTOR;
@@ -513,8 +483,6 @@ function drawGrid() {{
 
   const xStart = Math.floor(gridMinX / step) * step;
   const xEnd = Math.ceil(gridMaxX / step) * step;
-  const labelXStart = Math.floor(vb.x / step) * step;
-  const labelXEnd = Math.ceil((vb.x + vb.w) / step) * step;
 
   for (let gx = xStart; gx <= xEnd; gx += step) {{
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -526,17 +494,6 @@ function drawGrid() {{
     grid.appendChild(line);
   }}
 
-  for (let gx = labelXStart; gx <= labelXEnd; gx += step) {{
-    const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    lbl.setAttribute('x', gx);
-    lbl.setAttribute('y', vb.y + fontSize * 1.2);
-    lbl.setAttribute('text-anchor', 'middle');
-    lbl.setAttribute('font-size', fontSize);
-    lbl.setAttribute('class', 'grid-label');
-    lbl.textContent = gx.toFixed(0);
-    gridLabels.appendChild(lbl);
-  }}
-
   for (const {{ mathY }} of overscannedYLines) {{
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     line.setAttribute('x1', gridMinX);
@@ -545,16 +502,6 @@ function drawGrid() {{
     line.setAttribute('y2', mathY);
     line.setAttribute('class', 'grid-line');
     grid.appendChild(line);
-  }}
-
-  for (const {{ mathY, svgY }} of visibleYLines) {{
-    const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    lbl.setAttribute('x', vb.x + fontSize * 0.3);
-    lbl.setAttribute('y', svgY - fontSize * 0.3);
-    lbl.setAttribute('font-size', fontSize);
-    lbl.setAttribute('class', 'grid-label');
-    lbl.textContent = mathY.toFixed(0);
-    gridLabels.appendChild(lbl);
   }}
 }}
 
@@ -599,7 +546,6 @@ function drawGrid() {{
     const pt  = svg.createSVGPoint();
     pt.x = e.clientX; pt.y = e.clientY;
     const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
-    // undo flip
     const worldX = svgP.x;
     const worldY = flipOffset - svgP.y;
     coord.textContent = `x: ${{worldX.toFixed(2)}}  y: ${{worldY.toFixed(2)}}`;
@@ -618,7 +564,7 @@ function drawGrid() {{
 
   applyVB();
 
-// ── legend ──
+  // ── legend ──
   const legend = document.getElementById('legend');
   const seenNames = new Set();
   const labelEls = document.querySelectorAll('#labels .poly-label');
@@ -633,7 +579,6 @@ function drawGrid() {{
     item.innerHTML = `<span class="legend-swatch" style="background:${{color}}"></span>${{name}}`;
     legend.appendChild(item);
   }});
-  
   
 }})();
 </script>

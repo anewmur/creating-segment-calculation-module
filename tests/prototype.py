@@ -85,7 +85,7 @@ def main() -> None:
 
     # Визуализация
     viz = PolygonVisualizerSVG()
-    viz.set_title("Сегменты: до и после")
+    viz.set_title("Полигоны")
     viz.draw_before_after(before, after, draw_vertices=True)
 
     output_path = base_dir / "result.html"
