@@ -1,15 +1,35 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import re
 import sys
 import types
+from html.parser import HTMLParser
 from pathlib import Path
-import math
+
+
+class _SvgStructureParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._stack: list[str] = []
+        self.parent_by_id: dict[str, str | None] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = dict(attrs)
+        element_id = attrs_dict.get("id")
+        current_parent = self._stack[-1] if self._stack else None
+        if element_id:
+            self.parent_by_id[element_id] = current_parent
+        self._stack.append(element_id or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._stack:
+            self._stack.pop()
 
 
 def _load_visualizer_module():
-    module_path = Path("tests/viz_test/polygon_visualizer_svg.py")
+    module_path = Path(__file__).resolve().parent / "polygon_visualizer_svg.py"
     spec = importlib.util.spec_from_file_location("polygon_visualizer_svg_test", module_path)
     assert spec and spec.loader
 
@@ -41,22 +61,18 @@ def _load_visualizer_module():
     return module
 
 
-def test_rendered_html_uses_single_js_source_for_grid_y_math():
+def test_rendered_html_places_grid_lines_in_world_and_labels_outside_it():
     module = _load_visualizer_module()
     html = module.PolygonVisualizerSVG()._render_html()
 
-    # Grid Y math is centralized in JS helpers.
-    assert "function computeGridStep(viewW, viewH)" in html
-    assert "function computeGridYLines(viewY, viewH, currentFlipOffset, step)" in html
-    assert "const step = computeGridStep(vb.w, vb.h);" in html
-    assert "const yLines = computeGridYLines(vb.y, vb.h, flipOffset, step);" in html
-    assert "const count = Math.round((yEnd - yStart) / step);" in html
-    assert "for (let idx = 0; idx <= count; idx += 1)" in html
-    assert re.search(r"mathY\.toFixed\(0\)", html)
+    parser = _SvgStructureParser()
+    parser.feed(html)
 
-    # Old duplicated inline branch/loop code must not return.
-    assert "for (let gy = yStart; gy <= yEnd; gy += step)" not in html
-    assert "lbl.textContent = (flipOffset - gy).toFixed(0);" not in html
+    parent_by_id = parser.parent_by_id
+    assert parent_by_id["world"] == "canvas"
+    assert parent_by_id["grid"] == "world"
+    assert parent_by_id["labels"] == "canvas"
+    assert parent_by_id["grid-labels"] == "labels"
 
 
 def test_grid_y_behavior_contract_for_initial_zoom_drag():
@@ -104,3 +120,17 @@ def test_grid_y_behavior_contract_for_initial_zoom_drag():
                 prev_math_y, prev_svg_y = lines[idx - 1]
                 assert math.isclose(math_y - prev_math_y, step, abs_tol=1e-9)
                 assert math.isclose(prev_svg_y - svg_y, step, abs_tol=1e-9)
+
+
+def test_grid_js_does_not_use_legacy_unflipped_y_loop():
+    module = _load_visualizer_module()
+    html = module.PolygonVisualizerSVG()._render_html()
+
+    assert "for (let gy = yStart; gy <= yEnd; gy += step)" not in html
+    assert "lbl.textContent = (flipOffset - gy).toFixed(0);" not in html
+
+    assert re.search(r"function\s+computeGridYLines\(viewY,\s*viewH,\s*currentFlipOffset,\s*step\)", html)
+    assert re.search(r"line\.setAttribute\('y1',\s*mathYMin\)", html)
+    assert re.search(r"line\.setAttribute\('y2',\s*mathYMax\)", html)
+    assert re.search(r"line\.setAttribute\('y1',\s*mathY\)", html)
+    assert re.search(r"line\.setAttribute\('y2',\s*mathY\)", html)
