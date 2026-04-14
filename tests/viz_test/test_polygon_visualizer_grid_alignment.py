@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
-import math
 import re
 import sys
 import types
 from pathlib import Path
+import math
 
 
 def _load_visualizer_module():
@@ -50,42 +50,13 @@ def test_rendered_html_uses_single_js_source_for_grid_y_math():
     assert "function computeGridYLines(viewY, viewH, currentFlipOffset, step)" in html
     assert "const step = computeGridStep(vb.w, vb.h);" in html
     assert "const yLines = computeGridYLines(vb.y, vb.h, flipOffset, step);" in html
-    assert re.search(r"for\s*\(const\s*\{\s*mathY,\s*svgY\s*\}\s*of\s*yLines\)", html)
+    assert "const count = Math.round((yEnd - yStart) / step);" in html
+    assert "for (let idx = 0; idx <= count; idx += 1)" in html
+    assert re.search(r"mathY\.toFixed\(0\)", html)
 
     # Old duplicated inline branch/loop code must not return.
     assert "for (let gy = yStart; gy <= yEnd; gy += step)" not in html
     assert "lbl.textContent = (flipOffset - gy).toFixed(0);" not in html
-
-
-def _compute_grid_step_py(view_w: float, view_h: float) -> float:
-    raw_step = max(view_w, view_h) / 12
-    power = math.floor(math.log10(raw_step))
-    base = 10**power
-    if raw_step / base > 5:
-        return 10 * base
-    if raw_step / base > 2:
-        return 5 * base
-    if raw_step / base > 1:
-        return 2 * base
-    return base
-
-
-def _compute_grid_y_lines_py(
-    view_y: float,
-    view_h: float,
-    flip_offset: float,
-    step: float,
-) -> list[tuple[float, float]]:
-    math_y_min = flip_offset - (view_y + view_h)
-    math_y_max = flip_offset - view_y
-    y_start = math.floor(math_y_min / step) * step
-    y_end = math.ceil(math_y_max / step) * step
-    lines: list[tuple[float, float]] = []
-    cur = y_start
-    while cur <= y_end + 1e-9:
-        lines.append((cur, flip_offset - cur))
-        cur += step
-    return lines
 
 
 def test_grid_y_behavior_contract_for_initial_zoom_drag():
@@ -118,8 +89,8 @@ def test_grid_y_behavior_contract_for_initial_zoom_drag():
     }
 
     for vb in (vb0, vb_zoom, vb_drag):
-        step = _compute_grid_step_py(vb["w"], vb["h"])
-        lines = _compute_grid_y_lines_py(vb["y"], vb["h"], flip_offset, step)
+        step = visualizer._compute_grid_step(vb["w"], vb["h"])
+        lines = visualizer._compute_grid_y_lines(vb["y"], vb["h"], flip_offset, step)
         assert lines
 
         visible_math_min = flip_offset - (vb["y"] + vb["h"])

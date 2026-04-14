@@ -9,6 +9,7 @@ import webbrowser
 from shapely.algorithms.polylabel import polylabel
 import html
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -129,6 +130,41 @@ class PolygonVisualizerSVG:
             segments.append(f"L {x},{y}")
         segments.append("Z")
         return " ".join(segments)
+
+    @staticmethod
+    def _compute_grid_step(view_width: float, view_height: float, target_lines: int = 12) -> float:
+        raw_step = max(view_width, view_height) / target_lines
+        power = math.floor(math.log10(raw_step))
+        base = 10**power
+        ratio = raw_step / base
+
+        if ratio > 5:
+            return 10 * base
+        if ratio > 2:
+            return 5 * base
+        if ratio > 1:
+            return 2 * base
+        return base
+
+    @staticmethod
+    def _compute_grid_y_lines(
+        view_y: float,
+        view_height: float,
+        flip_offset: float,
+        step: float,
+    ) -> list[tuple[float, float]]:
+        """Возвращает пары (math_y, svg_y) для горизонтальных линий сетки."""
+        math_y_min = flip_offset - (view_y + view_height)
+        math_y_max = flip_offset - view_y
+        y_start = math.floor(math_y_min / step) * step
+        y_end = math.ceil(math_y_max / step) * step
+
+        count = int(round((y_end - y_start) / step))
+        lines: list[tuple[float, float]] = []
+        for idx in range(count + 1):
+            math_y = y_start + idx * step
+            lines.append((math_y, flip_offset - math_y))
+        return lines
 
     def _render_svg_layers(self, pad: float) -> str:
         parts: list[str] = []
@@ -446,7 +482,9 @@ function computeGridYLines(viewY, viewH, currentFlipOffset, step) {{
   const yEnd = Math.ceil(mathYMax / step) * step;
 
   const lines = [];
-  for (let mathY = yStart; mathY <= yEnd; mathY += step) {{
+  const count = Math.round((yEnd - yStart) / step);
+  for (let idx = 0; idx <= count; idx += 1) {{
+    const mathY = yStart + idx * step;
     lines.push({{ mathY, svgY: currentFlipOffset - mathY }});
   }}
   return lines;
