@@ -36,17 +36,18 @@ class _Layer:
 class PolygonVisualizerSVG:
     """Генерирует интерактивный HTML+SVG для визуализации полигонов."""
 
-    def __init__(self) -> None:
+    def __init__(self, merge_radius: float = 20.0) -> None:
         self._layers: list[_Layer] = []
         self._title: str = ""
         self._labels: list[str] = []
+        self._merge_radius = merge_radius
 
     # ── public API ──────────────────────────────────────────────
 
     def draw_polygons(
-        self,
-        polygons: list[Polygon],
-        style: PolygonStyle | None = None,
+            self,
+            polygons: list[Polygon],
+            style: PolygonStyle | None = None,
     ) -> None:
         if style is None:
             style = PolygonStyle()
@@ -59,10 +60,10 @@ class PolygonVisualizerSVG:
         self._layers.append(_Layer(polygons=flat, style=style))
 
     def draw_before_after(
-        self,
-        before: list[Polygon],
-        after: list[Polygon],
-        draw_vertices: bool = True,
+            self,
+            before: list[Polygon],
+            after: list[Polygon],
+            draw_vertices: bool = True,
     ) -> None:
 
         before_style = PolygonStyle(
@@ -70,7 +71,7 @@ class PolygonVisualizerSVG:
             stroke_width=1.0,
             fill="#9ca3af",
             fill_opacity=0.16,
-            vertex_radius=28 if draw_vertices else 0,
+            vertex_radius=-1 if draw_vertices else 0,
             vertex_color="#6b7280",
             label=None,
         )
@@ -79,7 +80,7 @@ class PolygonVisualizerSVG:
             stroke_width=1.8,
             fill="#2563eb",
             fill_opacity=0.20,
-            vertex_radius=28 if draw_vertices else 0,
+            vertex_radius=-1 if draw_vertices else 0,
             vertex_color="#1d4ed8",
             label=None,
         )
@@ -135,7 +136,7 @@ class PolygonVisualizerSVG:
     def _compute_grid_step(view_width: float, view_height: float, target_lines: int = 12) -> float:
         raw_step = max(view_width, view_height) / target_lines
         power = math.floor(math.log10(raw_step))
-        base = 10**power
+        base = 10 ** power
         ratio = raw_step / base
 
         if ratio > 5:
@@ -153,10 +154,12 @@ class PolygonVisualizerSVG:
         min_x, min_y, max_x, max_y = self._compute_bounds()
         map_size = max(max_x - min_x, max_y - min_y) or 100
         font_size = map_size * 0.017
+        auto_vertex_radius = map_size * 0.012
         flip_offset = min_y + max_y
 
         for layer_idx, layer in enumerate(self._layers):
             style = layer.style
+            vertex_radius = auto_vertex_radius if style.vertex_radius < 0 else style.vertex_radius
             group_id = f"layer-{layer_idx}"
             parts.append(f'<g id="{group_id}" class="poly-layer">')
 
@@ -175,13 +178,13 @@ class PolygonVisualizerSVG:
                     f"<title>{tooltip}</title></path>"
                 )
 
-                if style.vertex_radius > 0:
+                if vertex_radius > 0:
                     vertex_color = style.vertex_color or style.stroke
                     for coord_x, coord_y in poly.exterior.coords:
                         parts.append(
-                            f'  <circle cx="{coord_x}" cy="{coord_y}" r="{style.vertex_radius}" '
+                            f'  <circle cx="{coord_x}" cy="{coord_y}" r="{vertex_radius}" '
                             f'fill="{vertex_color}" class="vertex"'
-                            f' data-base-r="{style.vertex_radius}">'
+                            f' data-base-r="{vertex_radius}">'
                             f"<title>({coord_x:.2f}, {coord_y:.2f})</title></circle>"
                         )
 
@@ -228,6 +231,7 @@ class PolygonVisualizerSVG:
             pad=pad,
             svg_layers=svg_layers,
             svg_labels=svg_labels,
+            merge_radius=self._merge_radius,
         )
 
     def show(self, path: str | Path) -> None:
@@ -237,7 +241,6 @@ class PolygonVisualizerSVG:
 
 
 # ── HTML template ───────────────────────────────────────────────
-
 _HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html lang="ru">
@@ -246,7 +249,7 @@ _HTML_TEMPLATE = """\
 <title>{title}</title>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  
+
 body {{
   background: #dcfce7;
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
@@ -305,6 +308,20 @@ body {{
   stroke-width: 1;
   pointer-events: all;
 }}
+
+.vertex:hover {{
+  fill: inherit;
+}}
+
+.merge-radius-hover {{
+  fill: #ef4444;
+  fill-opacity: 0.28;
+  stroke: #dc2626;
+  stroke-width: 1;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}}
+
 #legend {{
   position: fixed;
   bottom: 12px; left: 12px;
@@ -318,7 +335,6 @@ body {{
   gap: 6px;
   z-index: 10;
 }}
-
 
 #svg-container {{
     position: fixed;
@@ -341,23 +357,19 @@ svg {{
     fill-opacity: 0.45 !important;
     stroke-width: 2.5;
 }}
-.vertex:hover {{
-    r: 5;
-    fill: #f59e0b !important;
-}}
 .poly-label {{
     font-family: 'JetBrains Mono', monospace;
     text-anchor: middle;
     dominant-baseline: central;
     pointer-events: none;
 }}
-  .legend-item {{
-    display: flex; align-items: center; gap: 8px;
-  }}
-  .legend-swatch {{
-    width: 18px; height: 4px;
-    border-radius: 2px;
-  }}
+.legend-item {{
+  display: flex; align-items: center; gap: 8px;
+}}
+.legend-swatch {{
+  width: 18px; height: 4px;
+  border-radius: 2px;
+}}
 </style>
 </head>
 <body>
@@ -377,209 +389,263 @@ svg {{
 <svg id="canvas" viewBox="{vb_x} {vb_y} {vb_w} {vb_h}"
      xmlns="http://www.w3.org/2000/svg"
      preserveAspectRatio="xMidYMid meet">
-  <!-- flip Y so math coords go up -->
   <g id="world" transform="scale(1,-1) translate(0, 0)">
       <g id="grid"></g>
+      <g id="hover-overlay"></g>
       {svg_layers}
   </g>
-  <!-- Подписи без отражения, чтобы текст не переворачивался -->
   <g id="labels">
       {svg_labels}
   </g>
 </svg>
 </div>
 
-<div id="legend" id="legend"></div>
+<div id="legend"></div>
 
 <script>
 (function() {{
-  const svg   = document.getElementById('canvas');
-  const cont  = document.getElementById('svg-container');
-  const info  = document.getElementById('zoom-info');
+  const svg = document.getElementById('canvas');
+  const cont = document.getElementById('svg-container');
+  const info = document.getElementById('zoom-info');
   const coord = document.getElementById('coords');
+  const hoverOverlay = document.getElementById('hover-overlay');
 
-  // initial viewBox
   const VB0 = {{ x: {vb_x}, y: {vb_y}, w: {vb_w}, h: {vb_h} }};
   let vb = {{ ...VB0 }};
   const WORLD_MIN_Y = {min_y};
   const WORLD_MAX_Y = {max_y};
-  const flipOffset  = WORLD_MIN_Y + WORLD_MAX_Y;
+  const flipOffset = WORLD_MIN_Y + WORLD_MAX_Y;
+  const mergeRadius = {merge_radius};
 
-  // set flip offset
+  let hoverCircle = null;
+
   document.getElementById('world')
     .setAttribute('transform', `scale(1,-1) translate(0, -${{flipOffset}})`);
-    
-function applyVB() {{
-  svg.setAttribute('viewBox', `${{vb.x}} ${{vb.y}} ${{vb.w}} ${{vb.h}}`);
-  info.textContent = Math.round(VB0.w / vb.w * 100) + '%';
-  drawGrid();
-  updateLabelScale();
-}}
 
-function updateLabelScale() {{
-  const zoom = VB0.w / vb.w;
-  const labels = document.querySelectorAll('#labels .poly-label');
-
-  labels.forEach(label => {{
-    const baseFontSize = Number(label.dataset.baseFontSize || 12);
-    const fontSize = zoom >= 1 ? baseFontSize / zoom : baseFontSize;
-    const baseY = Number(label.dataset.baseY);
-    const layerIdx = Number(label.dataset.layer || 0);
-    const offset = layerIdx * fontSize * 2;
-
-    label.setAttribute('font-size', String(fontSize));
-    label.setAttribute('y', String(baseY - offset));
-  }});
-
-  const vertices = document.querySelectorAll('.vertex');
-  vertices.forEach(v => {{
-    const baseR = Number(v.dataset.baseR || 3);
-    const r = zoom >= 1 ? baseR / zoom : baseR;
-    v.setAttribute('r', String(r));
-  }});
-}}
-
-function computeGridStep(viewW, viewH) {{
-  const targetLines = 12;
-  const rawStep = Math.max(viewW, viewH) / targetLines;
-  const power = Math.floor(Math.log10(rawStep));
-  const base = 10 ** power;
-  if (rawStep / base > 5) return 10 * base;
-  if (rawStep / base > 2) return 5 * base;
-  if (rawStep / base > 1) return 2 * base;
-  return base;
-}}
-
-function computeGridYLines(viewY, viewH, currentFlipOffset, step) {{
-  const mathYMin = currentFlipOffset - (viewY + viewH);
-  const mathYMax = currentFlipOffset - viewY;
-  const yStart = Math.floor(mathYMin / step) * step;
-  const yEnd = Math.ceil(mathYMax / step) * step;
-
-  const lines = [];
-  const count = Math.round((yEnd - yStart) / step);
-  for (let idx = 0; idx <= count; idx += 1) {{
-    const mathY = yStart + idx * step;
-    lines.push({{ mathY, svgY: currentFlipOffset - mathY }});
-  }}
-  return lines;
-}}
-
-function drawGrid() {{
-  const grid = document.getElementById('grid');
-  grid.innerHTML = '';
-
-  const GRID_OVERSCAN_FACTOR = 10;
-  const step = computeGridStep(vb.w, vb.h);
-
-  const gridMinX = vb.x - vb.w * GRID_OVERSCAN_FACTOR;
-  const gridMaxX = vb.x + vb.w + vb.w * GRID_OVERSCAN_FACTOR;
-  const gridMinY = vb.y - vb.h * GRID_OVERSCAN_FACTOR;
-  const gridMaxY = vb.y + vb.h + vb.h * GRID_OVERSCAN_FACTOR;
-
-  const mathGridYMin = flipOffset - gridMaxY;
-  const mathGridYMax = flipOffset - gridMinY;
-  const overscannedYLines = computeGridYLines(gridMinY, gridMaxY - gridMinY, flipOffset, step);
-
-  const xStart = Math.floor(gridMinX / step) * step;
-  const xEnd = Math.ceil(gridMaxX / step) * step;
-
-  for (let gx = xStart; gx <= xEnd; gx += step) {{
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', gx);
-    line.setAttribute('y1', mathGridYMin);
-    line.setAttribute('x2', gx);
-    line.setAttribute('y2', mathGridYMax);
-    line.setAttribute('class', 'grid-line');
-    grid.appendChild(line);
+  function applyVB() {{
+    svg.setAttribute('viewBox', `${{vb.x}} ${{vb.y}} ${{vb.w}} ${{vb.h}}`);
+    info.textContent = Math.round(VB0.w / vb.w * 100) + '%';
+    drawGrid();
+    updateLabelScale();
   }}
 
-  for (const {{ mathY }} of overscannedYLines) {{
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', gridMinX);
-    line.setAttribute('y1', mathY);
-    line.setAttribute('x2', gridMaxX);
-    line.setAttribute('y2', mathY);
-    line.setAttribute('class', 'grid-line');
-    grid.appendChild(line);
-  }}
-}}
+  function updateLabelScale() {{
+    const zoom = VB0.w / vb.w;
+    const labels = document.querySelectorAll('#labels .poly-label');
 
-  // ── mouse zoom ──
-  cont.addEventListener('wheel', e => {{
-    e.preventDefault();
-    const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+    labels.forEach(label => {{
+      const baseFontSize = Number(label.dataset.baseFontSize || 12);
+      const fontSize = zoom >= 1 ? baseFontSize / zoom : baseFontSize;
+      const baseY = Number(label.dataset.baseY);
+      const layerIdx = Number(label.dataset.layer || 0);
+      const offset = layerIdx * fontSize * 2;
+
+      label.setAttribute('font-size', String(fontSize));
+      label.setAttribute('y', String(baseY - offset));
+    }});
+
+    const vertices = document.querySelectorAll('.vertex');
+    vertices.forEach(vertex => {{
+      const baseR = Number(vertex.dataset.baseR || 3);
+      const radius = zoom >= 1 ? baseR / zoom : baseR;
+      vertex.setAttribute('r', String(radius));
+    }});
+  }}
+
+  function computeGridStep(viewW, viewH) {{
+    const targetLines = 12;
+    const rawStep = Math.max(viewW, viewH) / targetLines;
+    const power = Math.floor(Math.log10(rawStep));
+    const base = 10 ** power;
+    if (rawStep / base > 5) return 10 * base;
+    if (rawStep / base > 2) return 5 * base;
+    if (rawStep / base > 1) return 2 * base;
+    return base;
+  }}
+
+  function computeGridYLines(viewY, viewH, currentFlipOffset, step) {{
+    const mathYMin = currentFlipOffset - (viewY + viewH);
+    const mathYMax = currentFlipOffset - viewY;
+    const yStart = Math.floor(mathYMin / step) * step;
+    const yEnd = Math.ceil(mathYMax / step) * step;
+
+    const lines = [];
+    const count = Math.round((yEnd - yStart) / step);
+    for (let idx = 0; idx <= count; idx += 1) {{
+      const mathY = yStart + idx * step;
+      lines.push({{ mathY, svgY: currentFlipOffset - mathY }});
+    }}
+    return lines;
+  }}
+
+  function drawGrid() {{
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '';
+
+    const GRID_OVERSCAN_FACTOR = 10;
+    const step = computeGridStep(vb.w, vb.h);
+
+    const gridMinX = vb.x - vb.w * GRID_OVERSCAN_FACTOR;
+    const gridMaxX = vb.x + vb.w + vb.w * GRID_OVERSCAN_FACTOR;
+    const gridMinY = vb.y - vb.h * GRID_OVERSCAN_FACTOR;
+    const gridMaxY = vb.y + vb.h + vb.h * GRID_OVERSCAN_FACTOR;
+
+    const mathGridYMin = flipOffset - gridMaxY;
+    const mathGridYMax = flipOffset - gridMinY;
+    const overscannedYLines = computeGridYLines(gridMinY, gridMaxY - gridMinY, flipOffset, step);
+
+    const xStart = Math.floor(gridMinX / step) * step;
+    const xEnd = Math.ceil(gridMaxX / step) * step;
+
+    for (let gridX = xStart; gridX <= xEnd; gridX += step) {{
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', gridX);
+      line.setAttribute('y1', mathGridYMin);
+      line.setAttribute('x2', gridX);
+      line.setAttribute('y2', mathGridYMax);
+      line.setAttribute('class', 'grid-line');
+      grid.appendChild(line);
+    }}
+
+    for (const {{ mathY }} of overscannedYLines) {{
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', gridMinX);
+      line.setAttribute('y1', mathY);
+      line.setAttribute('x2', gridMaxX);
+      line.setAttribute('y2', mathY);
+      line.setAttribute('class', 'grid-line');
+      grid.appendChild(line);
+    }}
+  }}
+
+  function showMergeRadius(worldX, worldY) {{
+    if (!hoverCircle) {{
+      hoverCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      hoverCircle.setAttribute('class', 'merge-radius-hover');
+      hoverOverlay.appendChild(hoverCircle);
+    }}
+
+    hoverCircle.setAttribute('cx', String(worldX));
+    hoverCircle.setAttribute('cy', String(worldY));
+    hoverCircle.setAttribute('r', String(mergeRadius));
+  }}
+
+  function hideMergeRadius() {{
+    if (!hoverCircle) {{
+      return;
+    }}
+    hoverCircle.remove();
+    hoverCircle = null;
+  }}
+
+  cont.addEventListener('wheel', event => {{
+    event.preventDefault();
+    const factor = event.deltaY > 0 ? 1.15 : 1 / 1.15;
     const rect = svg.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) / rect.width;
-    const my = (e.clientY - rect.top)  / rect.height;
-    const nw = vb.w * factor;
-    const nh = vb.h * factor;
-    vb.x += (vb.w - nw) * mx;
-    vb.y += (vb.h - nh) * my;
-    vb.w = nw;
-    vb.h = nh;
+    const mouseX = (event.clientX - rect.left) / rect.width;
+    const mouseY = (event.clientY - rect.top) / rect.height;
+    const newWidth = vb.w * factor;
+    const newHeight = vb.h * factor;
+    vb.x += (vb.w - newWidth) * mouseX;
+    vb.y += (vb.h - newHeight) * mouseY;
+    vb.w = newWidth;
+    vb.h = newHeight;
     applyVB();
   }}, {{ passive: false }});
 
-  // ── drag ──
-  let dragging = false, lastX, lastY;
-  cont.addEventListener('mousedown', e => {{
-    dragging = true; lastX = e.clientX; lastY = e.clientY;
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  cont.addEventListener('mousedown', event => {{
+    dragging = true;
+    lastX = event.clientX;
+    lastY = event.clientY;
     cont.classList.add('dragging');
   }});
-  window.addEventListener('mousemove', e => {{
-    if (!dragging) return;
+
+  window.addEventListener('mousemove', event => {{
+    if (!dragging) {{
+      return;
+    }}
     const rect = svg.getBoundingClientRect();
-    const dx = (e.clientX - lastX) / rect.width  * vb.w;
-    const dy = (e.clientY - lastY) / rect.height * vb.h;
-    vb.x -= dx; vb.y -= dy;
-    lastX = e.clientX; lastY = e.clientY;
+    const deltaX = (event.clientX - lastX) / rect.width * vb.w;
+    const deltaY = (event.clientY - lastY) / rect.height * vb.h;
+    vb.x -= deltaX;
+    vb.y -= deltaY;
+    lastX = event.clientX;
+    lastY = event.clientY;
     applyVB();
   }});
+
   window.addEventListener('mouseup', () => {{
     dragging = false;
     cont.classList.remove('dragging');
   }});
 
-  // ── coords display ──
-  svg.addEventListener('mousemove', e => {{
-    const pt  = svg.createSVGPoint();
-    pt.x = e.clientX; pt.y = e.clientY;
-    const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
-    const worldX = svgP.x;
-    const worldY = flipOffset - svgP.y;
+  svg.addEventListener('mousemove', event => {{
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const svgPoint = point.matrixTransform(svg.getScreenCTM().inverse());
+    const worldX = svgPoint.x;
+    const worldY = flipOffset - svgPoint.y;
     coord.textContent = `x: ${{worldX.toFixed(2)}}  y: ${{worldY.toFixed(2)}}`;
   }});
 
-  // ── buttons ──
-  window.resetView = () => {{ vb = {{ ...VB0 }}; applyVB(); }};
-  window.zoomIn    = () => {{
-    vb.x += vb.w * 0.15; vb.y += vb.h * 0.15;
-    vb.w *= 0.7; vb.h *= 0.7; applyVB();
+  window.resetView = () => {{
+    vb = {{ ...VB0 }};
+    applyVB();
   }};
-  window.zoomOut   = () => {{
-    vb.x -= vb.w * 0.2; vb.y -= vb.h * 0.2;
-    vb.w *= 1.4; vb.h *= 1.4; applyVB();
+
+  window.zoomIn = () => {{
+    vb.x += vb.w * 0.15;
+    vb.y += vb.h * 0.15;
+    vb.w *= 0.7;
+    vb.h *= 0.7;
+    applyVB();
+  }};
+
+  window.zoomOut = () => {{
+    vb.x -= vb.w * 0.2;
+    vb.y -= vb.h * 0.2;
+    vb.w *= 1.4;
+    vb.h *= 1.4;
+    applyVB();
   }};
 
   applyVB();
 
-  // ── legend ──
+  const vertices = document.querySelectorAll('.vertex');
+  vertices.forEach(vertex => {{
+    vertex.addEventListener('mouseenter', () => {{
+      const worldX = Number(vertex.getAttribute('cx'));
+      const worldY = Number(vertex.getAttribute('cy'));
+      showMergeRadius(worldX, worldY);
+    }});
+
+    vertex.addEventListener('mouseleave', () => {{
+      hideMergeRadius();
+    }});
+  }});
+
   const legend = document.getElementById('legend');
   const seenNames = new Set();
-  const labelEls = document.querySelectorAll('#labels .poly-label');
-  labelEls.forEach(label => {{
+  const labelElements = document.querySelectorAll('#labels .poly-label');
+
+  labelElements.forEach(label => {{
     const color = label.getAttribute('fill');
     const rawText = label.textContent;
     const name = rawText.replace(/_\\d+$/, '');
-    if (seenNames.has(name)) return;
+    if (seenNames.has(name)) {{
+      return;
+    }}
     seenNames.add(name);
     const item = document.createElement('div');
     item.className = 'legend-item';
     item.innerHTML = `<span class="legend-swatch" style="background:${{color}}"></span>${{name}}`;
     legend.appendChild(item);
   }});
-  
 }})();
 </script>
 </body>

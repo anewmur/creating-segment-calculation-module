@@ -37,7 +37,7 @@ def load_polygons_from_result(result) -> list[ShapelyPolygon]:
     return polygons
 
 
-def main() -> None:
+def main(file, merge_radius) -> None:
     base_dir = Path(__file__).resolve().parents[1] / "data"
 
     # Проверяем что всё на месте
@@ -45,7 +45,7 @@ def main() -> None:
         print(f"ОШИБКА: директория '{base_dir.resolve()}' не найдена. Создайте её и положите туда polygon2.json")
         sys.exit(1)
 
-    polygon_path = base_dir / "polygon2.json"
+    polygon_path = base_dir / file
     if not polygon_path.exists():
         print(f"ОШИБКА: файл '{polygon_path.resolve()}' не найден")
         sys.exit(1)
@@ -57,6 +57,7 @@ def main() -> None:
             "name_by": "Имени полигона",
             "segments_group": "1",
             "segments_type": "2",
+            "merge_radius": merge_radius,
         },
         "polygon": {
             "id": "polygon",
@@ -84,7 +85,7 @@ def main() -> None:
         print("ВНИМАНИЕ: расчёт не вернул ни одного сегмента")
 
     # Визуализация
-    viz = PolygonVisualizerSVG()
+    viz = PolygonVisualizerSVG(merge_radius=input_data.parameter.merge_radius)
     viz.set_title("Полигоны")
     viz.draw_before_after(before, after, draw_vertices=True)
 
@@ -103,4 +104,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # file = "polygon2.json"
+    file = "test_polygon_2.json"
+    merge_radius=5
+    main(file=file, merge_radius=merge_radius)

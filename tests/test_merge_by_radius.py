@@ -48,9 +48,13 @@ def test_merge_by_radius_skips_when_same_neighbor_has_two_vertices_in_radius():
     coords_1 = list(result_polygons[0].exterior.coords)
     coords_2 = list(result_polygons[1].exterior.coords)
 
-    assert (4.0, 0.0) in coords_1
-    assert (5.0, 0.0) in coords_2
-    assert (5.0, 1.0) in coords_2
+    assert infos == [
+        'Расчёт сегментов\n'
+        'Для некоторых полилиний полигона Полигон в радиус склейки входит более 1 точки одной полилинии. '
+        'Склейка не будет выполнена.',
+    ]
+    assert warnings == []
+    assert len(result_polygons) == 2
 
 
 def test_merge_by_radius_keeps_polygon_closed():
@@ -68,10 +72,13 @@ def test_merge_by_radius_keeps_polygon_closed():
 
 
 def test_merge_by_radius_excludes_polygon_after_self_intersection():
-    polygon_1 = Polygon([(0, 0), (4, 0), (4, 4), (2, 1), (0, 4), (0, 0)])
-    polygon_2 = Polygon([(8, 3), (20, 3), (20, 20), (8, 3)])
+    # p1 — вогнутый полигон с впадиной (6,5)-(8,8).
+    # При сдвиге (10,10) → (10,12) ребро пересечёт само себя.
+    polygon_1 = Polygon([(0, 0), (10, 0), (10, 10), (6, 5), (8, 8), (0, 10), (0, 0)])
+    # p2 — треугольник с вершиной (10,14), которая попадает в радиус 5 только от (10,10).
+    polygon_2 = Polygon([(10, 14), (20, 14), (20, 20), (10, 14)])
 
-    result_polygons, warnings, infos = merge_by_radius([polygon_1, polygon_2], 7.0, 'Полигон')
+    result_polygons, warnings, infos = merge_by_radius(polygons= [polygon_1, polygon_2], merge_radius=5.0, polygon_name='Полигон')
 
     assert len(result_polygons) == 1
     assert infos == []
