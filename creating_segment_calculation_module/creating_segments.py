@@ -164,6 +164,17 @@ def check_intersections(polygons: list[Polygon], polygon_name: str) -> tuple[lis
     return polygons, warnings
 
 
+def merge_by_radius(
+    polygons: list[Polygon],
+    merge_radius: float,
+    polygon_name: str,
+) -> tuple[list[Polygon], list[str], list[str]]:
+    """Временная заглушка склейки по радиусу."""
+    warnings: list[str] = []
+    infos: list[str] = []
+    return polygons, warnings, infos
+
+
 def assign_segment_names(polygons: list[Polygon], input_data: CalculationInput, storage: Storage) -> list[Segment]:
     """Назначает имена сегментам и формирует результат"""
     segments = []
