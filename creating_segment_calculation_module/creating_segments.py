@@ -131,12 +131,131 @@ def process_polygon_intersection(
     return first_polygon, second_polygon, warnings
 
 
+def extract_points(geometry) -> list[Point]:
+    """Возвращает только объекты типа Point из результата пересечения границ."""
+    if geometry.is_empty:
+        return []
+
+    if geometry.geom_type == 'Point':
+        return [geometry]
+
+    if geometry.geom_type == 'MultiPoint':
+        return list(geometry.geoms)
+
+    result: list[Point] = []
+    if hasattr(geometry, 'geoms'):
+        for sub_geometry in geometry.geoms:
+            if sub_geometry.geom_type == 'Point':
+                result.append(sub_geometry)
+
+    return result
+
+
+def handle_containment(
+    polygons: list[Polygon],
+    first_index: int,
+    second_index: int,
+    warnings: list[str],
+    polygon_name: str,
+) -> None:
+    """Обрабатывает вложенность: внутренний полигон остаётся, внешний получает отверстие."""
+    first_polygon = polygons[first_index]
+    second_polygon = polygons[second_index]
+
+    if first_polygon.contains(second_polygon):
+        outer_index = first_index
+        inner_index = second_index
+    elif second_polygon.contains(first_polygon):
+        outer_index = second_index
+        inner_index = first_index
+    else:
+        return
+
+    outer_polygon = polygons[outer_index]
+    inner_polygon = polygons[inner_index]
+    rebuilt_outer = outer_polygon.difference(inner_polygon)
+
+    if (
+        rebuilt_outer.is_empty
+        or rebuilt_outer.geom_type != 'Polygon'
+        or not rebuilt_outer.is_valid
+        or len(rebuilt_outer.interiors) < 1
+    ):
+        warnings.append(
+            f'{CALCULATION_NAME}'
+            f'Полилиния полигона {polygon_name} исключена из расчёта из-за ошибки обработки вложенности.',
+        )
+        polygons.pop(outer_index)
+        return
+
+    polygons[outer_index] = rebuilt_outer
+
+
+def process_intersections_rebuild(
+    polygons: list[Polygon],
+    polygon_name: str,
+) -> tuple[list[Polygon], list[str]]:
+    """
+    Последовательно обрабатывает пары полигонов.
+    В блоке 3 реализуется только случай вложенности без точек пересечения границ.
+    """
+    warnings: list[str] = []
+    polygons = list(polygons)
+
+    polygon_index = 0
+    while polygon_index < len(polygons):
+        other_index = polygon_index + 1
+        while other_index < len(polygons):
+            first_polygon = polygons[polygon_index]
+            second_polygon = polygons[other_index]
+
+            if not first_polygon.intersects(second_polygon):
+                other_index += 1
+                continue
+
+            intersection_geom = first_polygon.intersection(second_polygon)
+            if intersection_geom.is_empty or intersection_geom.area <= 0:
+                other_index += 1
+                continue
+
+            boundary_intersection = first_polygon.boundary.intersection(second_polygon.boundary)
+            intersection_points = extract_points(boundary_intersection)
+
+            if len(intersection_points) == 0:
+                before_len = len(polygons)
+                handle_containment(
+                    polygons=polygons,
+                    first_index=polygon_index,
+                    second_index=other_index,
+                    warnings=warnings,
+                    polygon_name=polygon_name,
+                )
+                if len(polygons) < before_len:
+                    if other_index < polygon_index:
+                        polygon_index -= 1
+                        break
+                    if other_index >= len(polygons):
+                        break
+                    continue
+
+            # Ветки блока 4 и блока 5 здесь пока отсутствуют.
+            other_index += 1
+        polygon_index += 1
+
+    return polygons, warnings
+
+
 def check_intersections(polygons: list[Polygon], polygon_name: str) -> tuple[list[Polygon], list[str]]:
     """Проверяет полигоны на пересечения и последовательно обрабатывает пары."""
     warnings: list[str] = []
+    excluded_indexes: set[int] = set()
 
     for first_index in range(len(polygons)):
+        if first_index in excluded_indexes:
+            continue
         for second_index in range(first_index + 1, len(polygons)):
+            if second_index in excluded_indexes:
+                continue
             first_polygon = polygons[first_index]
             second_polygon = polygons[second_index]
 
@@ -150,18 +269,16 @@ def check_intersections(polygons: list[Polygon], polygon_name: str) -> tuple[lis
             if intersection.area <= 1e-5:
                 continue
 
-
-            # Изменяем прямо в цикле пересекающиеся полигоны. Да, опасно, но согласовано
-            new_first_polygon, new_second_polygon, pair_warnings = process_polygon_intersection(
-                first_polygon,
-                second_polygon,
-                polygon_name,
+            excluded_indexes.update({first_index, second_index})
+            warnings.append(
+                f'{CALCULATION_NAME}'
+                f'Полилинии полигона {polygon_name} в параметре Полигоны пересекаются между собой, '
+                f'расчёт будет продолжен без её (их) учёта.',
             )
-            polygons[first_index] = new_first_polygon
-            polygons[second_index] = new_second_polygon
-            warnings.extend(pair_warnings)
+            break
 
-    return polygons, warnings
+    result_polygons = [polygon for index, polygon in enumerate(polygons) if index not in excluded_indexes]
+    return result_polygons, warnings
 
 
 def _collect_polygon_vertices(polygons: list[Polygon]) -> list[tuple[int, int, float, float]]:
@@ -375,6 +492,21 @@ def merge_by_radius(
 
     return result_polygons, warnings, infos
 
+
+def polygon_to_polygon_line(polygon: Polygon) -> PolygonLine:
+    """Преобразует Shapely Polygon в PolygonLine с учётом внутренних контуров."""
+    lines: list[Line] = []
+
+    exterior_points = [TargetPoint(x=coord[0], y=coord[1]) for coord in polygon.exterior.coords]
+    lines.append(Line(points=exterior_points))
+
+    for interior in polygon.interiors:
+        interior_points = [TargetPoint(x=coord[0], y=coord[1]) for coord in interior.coords]
+        lines.append(Line(points=interior_points))
+
+    return PolygonLine(lines=lines)
+
+
 def assign_segment_names(polygons: list[Polygon], input_data: CalculationInput, storage: Storage) -> list[Segment]:
     """Назначает имена сегментам и формирует результат"""
     segments = []
@@ -390,13 +522,8 @@ def assign_segment_names(polygons: list[Polygon], input_data: CalculationInput, 
             well_names = get_well_in_segment(input_data, polygon)
             name = generate_combined_name(well_names, name_counter)
 
-        # Преобразование полигона в наш формат
-        exterior = polygon.exterior
-        points = [TargetPoint(x=coord[0], y=coord[1]) for coord in exterior.coords]
-        line = Line(points=points)
-
         # Сохранение полигона в файл
-        polygon_data = PolygonLine(lines=[line]).model_dump()
+        polygon_data = polygon_to_polygon_line(polygon).model_dump()
         content = json.dumps(polygon_data, ensure_ascii=False, indent=2)
 
         # Создаем имя файла без запрещенных символов
@@ -535,8 +662,11 @@ def creating_segments(input_data: CalculationInput, storage: Storage) -> Calcula
             )
             return CalculationResult(formation=None, info=info_msgs, warning=warning_msgs, error=error_msgs)
 
-        # Проверка пересечений
-        polygons, intersection_warnings = check_intersections(polygons, input_data.polygon.name)
+        # Проверка/обработка пересечений
+        if input_data.parameter.process_intersections == 0:
+            polygons, intersection_warnings = check_intersections(polygons, input_data.polygon.name)
+        else:
+            polygons, intersection_warnings = process_intersections_rebuild(polygons, input_data.polygon.name)
         warning_msgs.extend(intersection_warnings)
 
         if not polygons:
