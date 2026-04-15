@@ -169,10 +169,96 @@ def merge_by_radius(
     merge_radius: float,
     polygon_name: str,
 ) -> tuple[list[Polygon], list[str], list[str]]:
-    """Временная заглушка склейки по радиусу."""
+    """Склеивает близкие вершины разных полилиний в пределах заданного радиуса."""
     warnings: list[str] = []
     infos: list[str] = []
-    return polygons, warnings, infos
+
+    if merge_radius <= 0 or len(polygons) < 2:
+        return polygons, warnings, infos
+
+    # Индекс исходных вершин (без замыкающей точки).
+    vertices: list[tuple[int, int, float, float]] = []
+    for polygon_index, polygon in enumerate(polygons):
+        coords = list(polygon.exterior.coords)
+        for vertex_index, (coord_x, coord_y) in enumerate(coords[:-1]):
+            vertices.append((polygon_index, vertex_index, coord_x, coord_y))
+
+    planned_moves: dict[tuple[int, int], tuple[float, float]] = {}
+    has_skip_info = False
+    radius_squared = merge_radius * merge_radius
+
+    # Один проход по исходным координатам.
+    for base_polygon_index, base_vertex_index, base_x, base_y in vertices:
+        neighbors: list[tuple[int, int, float, float]] = []
+        neighbor_counts: dict[int, int] = {}
+
+        for candidate_polygon_index, candidate_vertex_index, candidate_x, candidate_y in vertices:
+            if candidate_polygon_index == base_polygon_index:
+                continue
+
+            delta_x = candidate_x - base_x
+            delta_y = candidate_y - base_y
+            if (delta_x * delta_x + delta_y * delta_y) > radius_squared:
+                continue
+
+            neighbors.append((candidate_polygon_index, candidate_vertex_index, candidate_x, candidate_y))
+            neighbor_counts[candidate_polygon_index] = neighbor_counts.get(candidate_polygon_index, 0) + 1
+
+        if not neighbors:
+            continue
+
+        if any(hit_count > 1 for hit_count in neighbor_counts.values()):
+            has_skip_info = True
+            continue
+
+        group = [(base_polygon_index, base_vertex_index, base_x, base_y), *neighbors]
+        avg_x = sum(item[2] for item in group) / len(group)
+        avg_y = sum(item[3] for item in group) / len(group)
+
+        for polygon_index, vertex_index, _, _ in group:
+            vertex_key = (polygon_index, vertex_index)
+            if vertex_key not in planned_moves:
+                planned_moves[vertex_key] = (avg_x, avg_y)
+
+    if has_skip_info:
+        infos.append(
+            f'{CALCULATION_NAME}'
+            f'Для некоторых полилиний полигона {polygon_name} в радиус склейки входит более 1 точки одной полилинии. '
+            f'Склейка не будет выполнена.',
+        )
+
+    if not planned_moves:
+        return polygons, warnings, infos
+
+    # Применяем сдвиги одновременно.
+    result_polygons: list[Polygon] = []
+    for polygon_index, polygon in enumerate(polygons):
+        polygon_moves = {vertex_index: point for (poly_idx, vertex_index), point in planned_moves.items() if poly_idx == polygon_index}
+        if not polygon_moves:
+            result_polygons.append(polygon)
+            continue
+
+        original_coords = list(polygon.exterior.coords)
+        updated_coords = list(original_coords)
+
+        for vertex_index, new_point in polygon_moves.items():
+            updated_coords[vertex_index] = new_point
+
+        # Синхронизация замыкающей точки.
+        if 0 in polygon_moves:
+            updated_coords[-1] = updated_coords[0]
+
+        updated_polygon = Polygon(updated_coords)
+        if not updated_polygon.is_valid or not updated_polygon.is_simple:
+            warnings.append(
+                f'{CALCULATION_NAME}'
+                f'Полилиния полигона {polygon_name} исключена из расчёта из-за самопересечения после склейки.',
+            )
+            continue
+
+        result_polygons.append(updated_polygon)
+
+    return result_polygons, warnings, infos
 
 
 def assign_segment_names(polygons: list[Polygon], input_data: CalculationInput, storage: Storage) -> list[Segment]:
@@ -316,6 +402,22 @@ def creating_segments(input_data: CalculationInput, storage: Storage) -> Calcula
             error_msgs.append(
                 f"{CALCULATION_NAME}"
                 f"Все полилинии полигона '{input_data.polygon.name}' исключены после обрезки по контуру модели. Расчёт не выполнен.",
+            )
+            return CalculationResult(formation=None, info=info_msgs, warning=warning_msgs, error=error_msgs)
+
+        if input_data.parameter.merge_radius > 0:
+            polygons, merge_warnings, merge_infos = merge_by_radius(
+                polygons,
+                input_data.parameter.merge_radius,
+                input_data.polygon.name,
+            )
+            warning_msgs.extend(merge_warnings)
+            info_msgs.extend(merge_infos)
+
+        if not polygons:
+            error_msgs.append(
+                f"{CALCULATION_NAME}"
+                f"Все полилинии полигона '{input_data.polygon.name}' исключены после склейки по радиусу. Расчёт не выполнен.",
             )
             return CalculationResult(formation=None, info=info_msgs, warning=warning_msgs, error=error_msgs)
 
