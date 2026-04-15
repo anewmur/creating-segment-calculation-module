@@ -112,3 +112,33 @@ def test_creating_segments_with_well():
         result = creating_segments(input_data, storage)
         assert result.info == ['Расчёт сегментов\nУспешно создано сегментов: 1']
         assert result.formation.segment[0].name == 'well1'
+
+
+def test_parameter_defaults():
+    """Вход без новых полей — подставляются значения по умолчанию."""
+    raw = {
+        'parameter': {'name_by': 'Имени полигона', 'segments_group': '1', 'segments_type': '2'},
+        'polygon': {'id': '1', 'name': 'test', 'value': {'file': {'path': '/tmp/test'}}},
+        'formation': {'name': 'пласт'},
+    }
+    data = CalculationInput.model_validate(raw)
+    assert data.parameter.merge_radius == 20
+    assert data.parameter.process_intersections == 1
+
+
+def test_parameter_explicit_values():
+    """Вход с явно заданными значениями."""
+    raw = {
+        'parameter': {
+            'name_by': 'Имени полигона',
+            'segments_group': '1',
+            'segments_type': '2',
+            'merge_radius': 7,
+            'process_intersections': 0,
+        },
+        'polygon': {'id': '1', 'name': 'test', 'value': {'file': {'path': '/tmp/test'}}},
+        'formation': {'name': 'пласт'},
+    }
+    data = CalculationInput.model_validate(raw)
+    assert data.parameter.merge_radius == 7
+    assert data.parameter.process_intersections == 0
