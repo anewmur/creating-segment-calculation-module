@@ -23,17 +23,30 @@ def load_polygons_from_json(path: Path) -> list[ShapelyPolygon]:
 
 
 def load_polygons_from_result(result) -> list[ShapelyPolygon]:
-    polygons = []
+    polygons: list[ShapelyPolygon] = []
+
     if result.formation is None:
         return polygons
+
     for segment in result.formation.segment:
-        with open(segment.value.file.path, encoding="utf-8") as f:
-            data = json.load(f)
-        for line in data["lines"]:
-            coords = [(p["x"], p["y"]) for p in line["points"]]
-            poly = ShapelyPolygon(coords)
-            if poly.is_valid and not poly.is_empty:
-                polygons.append(poly)
+        with open(segment.value.file.path, encoding="utf-8") as file:
+            data = json.load(file)
+
+        lines = data.get("lines", [])
+        if not lines:
+            continue
+
+        shell = [(point["x"], point["y"]) for point in lines[0]["points"]]
+        holes: list[list[tuple[float, float]]] = []
+
+        for line in lines[1:]:
+            hole = [(point["x"], point["y"]) for point in line["points"]]
+            holes.append(hole)
+
+        polygon = ShapelyPolygon(shell=shell, holes=holes)
+        if polygon.is_valid and not polygon.is_empty:
+            polygons.append(polygon)
+
     return polygons
 
 

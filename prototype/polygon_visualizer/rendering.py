@@ -21,11 +21,20 @@ def ring_to_path(coords: list[tuple[float, float]]) -> str:
     return " ".join(segments)
 
 
-def polygon_to_svg_path(poly: Polygon) -> str:
+def polygon_to_svg_path(polygon) -> str:
     parts: list[str] = []
-    parts.append(ring_to_path(list(poly.exterior.coords)))
-    for interior in poly.interiors:
-        parts.append(ring_to_path(list(interior.coords)))
+
+    exterior = list(polygon.exterior.coords)
+    parts.append(
+        "M " + " L ".join(f"{x} {y}" for x, y in exterior) + " Z"
+    )
+
+    for interior in polygon.interiors:
+        hole = list(interior.coords)
+        parts.append(
+            "M " + " L ".join(f"{x} {y}" for x, y in hole) + " Z"
+        )
+
     return " ".join(parts)
 
 
