@@ -28,7 +28,15 @@ TEMP_UNSUPPORTED_INTERSECTION_WARNING = (
 
 logger = logging.getLogger('creating_segment_calculation_module')
 POINT_DEDUP_TOLERANCE = 1e-9
-INTERSECTION_AREA_TOLERANCE = 0
+# Допуск на «нулевую» площадь пересечения.
+# Два полигона с общей стороной теоретически пересекаются по линии (area == 0),
+# но из-за погрешности double shapely может возвращать микроскопическую
+# ненулевую площадь. При типичном масштабе координат задачи (~1e4) и длинах
+# сторон ~1e3 шум на общей границе даёт ложную площадь до ~1e-6. Значение 1e-5
+# надёжно покрывает этот шум с небольшим запасом и при этом много меньше
+# площади любого геометрически осмысленного пересечения (минимум в тестах —
+# 5000, запас >8 порядков).
+BOUNDARY_TOUCH_AREA_TOLERANCE = 1e-5
 
 
 def _collect_points_from_geometry(geometry) -> list[Point]:
@@ -262,7 +270,7 @@ def process_intersections_rebuild(
                 continue
 
             intersection_geom = first_polygon.intersection(second_polygon)
-            if intersection_geom.is_empty or intersection_geom.area <= INTERSECTION_AREA_TOLERANCE:
+            if intersection_geom.is_empty or intersection_geom.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
                 continue
 
             boundary_intersection = first_polygon.boundary.intersection(second_polygon.boundary)
@@ -319,7 +327,7 @@ def check_intersections(polygons: list[Polygon], polygon_name: str) -> tuple[lis
             intersection = first_polygon.intersection(second_polygon)
 
             # Проверяем, что пересечение имеет площадь (не только граница)
-            if intersection.area <= INTERSECTION_AREA_TOLERANCE:
+            if intersection.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
                 continue
 
             excluded_indexes.update({first_index, second_index})

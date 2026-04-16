@@ -16,7 +16,7 @@ from creating_segment_calculation_module.creating_segments import handle_contain
 from creating_segment_calculation_module.creating_segments import polygon_to_polygon_line
 from creating_segment_calculation_module.creating_segments import process_intersections_rebuild
 from creating_segment_calculation_module.models.creating_segments import CalculationInput
-from tests.viz_test.utils import Storage
+from tests.utils import Storage
 
 
 def test_creating_segments_with_border():
