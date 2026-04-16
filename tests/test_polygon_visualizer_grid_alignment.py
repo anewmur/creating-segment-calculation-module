@@ -29,7 +29,7 @@ class _SvgStructureParser(HTMLParser):
 
 
 def _load_visualizer_module():
-    module_path = Path(__file__).resolve().parent / "polygon_visualizer_svg.py"
+    module_path = Path(__file__).resolve().parent.parent / "prototype" / "polygon_visualizer_svg.py"
     spec = importlib.util.spec_from_file_location("polygon_visualizer_svg_test", module_path)
     assert spec and spec.loader
 

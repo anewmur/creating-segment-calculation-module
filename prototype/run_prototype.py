@@ -7,7 +7,7 @@ from shapely.geometry import Polygon as ShapelyPolygon
 from creating_segment_calculation_module.entry_points.creating_segments import calculate
 from creating_segment_calculation_module.models.creating_segments import CalculationInput
 from tests.viz_test.utils import Storage
-from tests.viz_test.polygon_visualizer_svg import PolygonVisualizerSVG
+from prototype.polygon_visualizer_svg import PolygonVisualizerSVG
 
 
 def load_polygons_from_json(path: Path) -> list[ShapelyPolygon]:
