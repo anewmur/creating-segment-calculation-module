@@ -113,6 +113,10 @@ svg {
     dominant-baseline: central;
     pointer-events: none;
 }
+.grid-label {
+    font-family: 'JetBrains Mono', monospace;
+    pointer-events: none;
+}
 .legend-item {
   display: flex; align-items: center; gap: 8px;
 }

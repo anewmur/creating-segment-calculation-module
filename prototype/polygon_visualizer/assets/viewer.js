@@ -81,6 +81,12 @@
 
     const labelsGroup = document.getElementById('grid-labels');
     labelsGroup.innerHTML = '';
+    const rect = svg.getBoundingClientRect();
+    const unitPerPixelX = rect.width > 0 ? vb.w / rect.width : 1;
+    const unitPerPixelY = rect.height > 0 ? vb.h / rect.height : 1;
+    const edgeOffsetX = 6 * unitPerPixelX;
+    const edgeOffsetY = 6 * unitPerPixelY;
+    const gridLabelFontSize = 12 * unitPerPixelY;
 
     const GRID_OVERSCAN_FACTOR = 10;
     const step = computeGridStep(vb.w, vb.h);
@@ -118,10 +124,13 @@
 
       if (svgY >= vb.y && svgY <= vb.y + vb.h) {
         const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        lbl.setAttribute('x', vb.x + 2);
-        lbl.setAttribute('y', svgY - 2);
-        lbl.setAttribute('font-size', Math.max(step * 0.23, 8));
+        lbl.setAttribute('x', vb.x + edgeOffsetX);
+        lbl.setAttribute('y', svgY);
+        lbl.setAttribute('font-size', String(gridLabelFontSize));
         lbl.setAttribute('fill', '#000');
+        lbl.setAttribute('class', 'grid-label');
+        lbl.setAttribute('text-anchor', 'start');
+        lbl.setAttribute('dominant-baseline', 'middle');
         lbl.textContent = mathY.toFixed(0);
         labelsGroup.appendChild(lbl);
       }
@@ -131,10 +140,13 @@
     const labelXEnd = Math.ceil((vb.x + vb.w) / step) * step;
     for (let gx = labelXStart; gx <= labelXEnd; gx += step) {
       const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      lbl.setAttribute('x', gx + 2);
-      lbl.setAttribute('y', vb.y + vb.h - 4);
-      lbl.setAttribute('font-size', Math.max(step * 0.23, 8));
+      lbl.setAttribute('x', gx + edgeOffsetX);
+      lbl.setAttribute('y', vb.y + edgeOffsetY);
+      lbl.setAttribute('font-size', String(gridLabelFontSize));
       lbl.setAttribute('fill', '#000');
+      lbl.setAttribute('class', 'grid-label');
+      lbl.setAttribute('text-anchor', 'start');
+      lbl.setAttribute('dominant-baseline', 'hanging');
       lbl.textContent = gx.toFixed(0);
       labelsGroup.appendChild(lbl);
     }
