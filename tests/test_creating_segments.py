@@ -407,6 +407,26 @@ def test_two_points_entry_guard_uses_shared_segment_check(monkeypatch):
     assert len(warnings) == 1
     assert 'неподдерживаемым способом' in warnings[0]
 
+def test_two_points_branch_excludes_both_polygons_when_rebuild_failed(monkeypatch):
+    polygon_1 = Polygon([(0, 0), (0, 10), (10, 10), (10, 0), (0, 0)])
+    polygon_2 = Polygon([(5, 5), (5, 15), (15, 15), (15, 5), (5, 5)])
+
+    class FakeTwoPointsResult:
+        status = TwoPointsRebuildStatus.rebuild_failed
+
+    monkeypatch.setattr(
+        'creating_segment_calculation_module.creating_segments.handle_two_points_intersection',
+        lambda polygons, first_index, second_index, intersection_points: FakeTwoPointsResult(),
+    )
+
+    result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
+
+    assert result == []
+    assert warnings == [
+        'Расчёт сегментов\n'
+        'Полилинии полигона test с пересечением в 2 точках '
+        'не удалось перестроить, обе полилинии исключены из расчёта.',
+    ]
 
 def test_process_intersections_rebuild_ignores_tiny_numerical_overlap():
     polygon_1 = Polygon([(0, 0), (0, 10), (10, 10), (10, 0), (0, 0)])
