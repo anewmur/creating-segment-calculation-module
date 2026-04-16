@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+{inline_css}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>{title}</h1>
+  <div id="controls">
+    <button onclick="resetView()">Сброс</button>
+    <button onclick="zoomIn()">+</button>
+    <button onclick="zoomOut()">−</button>
+  </div>
+  <span id="zoom-info">100%</span>
+  <span id="coords">—</span>
+</div>
+
+<div id="svg-container">
+<svg id="canvas" viewBox="{vb_x} {vb_y} {vb_w} {vb_h}"
+     xmlns="http://www.w3.org/2000/svg"
+     preserveAspectRatio="xMidYMid meet">
+  <g id="world" transform="scale(1,-1) translate(0, 0)">
+      <g id="grid"></g>
+      <g id="hover-overlay"></g>
+      {svg_layers}
+  </g>
+  <g id="labels">
+      <g id="grid-labels"></g>
+      {svg_labels}
+  </g>
+</svg>
+</div>
+
+<div id="legend"></div>
+
+<script>window.__VIZ_DATA__ = {viz_data_json};</script>
+<script>
+{inline_js}
+</script>
+</body>
+</html>
