@@ -105,6 +105,8 @@ def main(file, merge_radius) -> None:
 
 if __name__ == "__main__":
     # file = "polygon2.json"
-    file = "test_polygon_2.json"
+    # file = "test_polygon_2.json"
+
+    file = "test_nested_polygon.json"
     merge_radius=5
     main(file=file, merge_radius=merge_radius)

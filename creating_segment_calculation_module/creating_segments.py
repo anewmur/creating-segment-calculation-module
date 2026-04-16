@@ -28,7 +28,7 @@ TEMP_UNSUPPORTED_INTERSECTION_WARNING = (
 
 logger = logging.getLogger('creating_segment_calculation_module')
 POINT_DEDUP_TOLERANCE = 1e-9
-INTERSECTION_AREA_TOLERANCE = 1e-5
+INTERSECTION_AREA_TOLERANCE = 0
 
 
 def _collect_points_from_geometry(geometry) -> list[Point]:
