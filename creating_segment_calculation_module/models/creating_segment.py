@@ -2,12 +2,14 @@
 
 from enum import Enum
 
-# from nedra_calculate_ontology.ontology_model import File
-from tests.viz_test.utils import File
-
-
-
 from pydantic import BaseModel
+from pydantic import Field
+
+
+class File(BaseModel):
+    """Ссылка на файл результата/входа."""
+
+    path: str = Field(..., description='Путь к файлу')
 
 
 class SegmentType(Enum):
