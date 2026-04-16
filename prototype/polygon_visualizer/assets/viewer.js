@@ -7,10 +7,7 @@
 
   const VB0 = { ...window.__VIZ_DATA__.vb };
   let vb = { ...VB0 };
-  const WORLD_MIN_Y = window.__VIZ_DATA__.worldMinY;
-  const WORLD_MAX_Y = window.__VIZ_DATA__.worldMaxY;
   const flipOffset = window.__VIZ_DATA__.flipOffset;
-  // mergeRadius является частью явного контракта window.__VIZ_DATA__.
   const mergeRadius = window.__VIZ_DATA__.mergeRadius;
 
   let hoverCircle = null;
@@ -33,8 +30,8 @@
       const baseFontSize = Number(label.dataset.baseFontSize || 12);
       const fontSize = zoom >= 1 ? baseFontSize / zoom : baseFontSize;
       const baseY = Number(label.dataset.baseY);
-      const layerIdx = Number(label.dataset.layer || 0);
-      const offset = layerIdx * fontSize * 2;
+      const layerIndex = Number(label.dataset.layer || 0);
+      const offset = layerIndex * fontSize * 2;
 
       label.setAttribute('font-size', String(fontSize));
       label.setAttribute('y', String(baseY - offset));
@@ -42,36 +39,45 @@
 
     const vertices = document.querySelectorAll('.vertex');
     vertices.forEach(vertex => {
-      const baseR = Number(vertex.dataset.baseR || 3);
-      const radius = zoom >= 1 ? baseR / zoom : baseR;
+      const baseRadius = Number(vertex.dataset.baseR || 3);
+      const radius = zoom >= 1 ? baseRadius / zoom : baseRadius;
       vertex.setAttribute('r', String(radius));
     });
   }
 
-  function computeGridStep(viewW, viewH) {
+  function computeGridStep(viewWidth, viewHeight) {
     const targetLines = 12;
-    const rawStep = Math.max(viewW, viewH) / targetLines;
+    const rawStep = Math.max(viewWidth, viewHeight) / targetLines;
     const power = Math.floor(Math.log10(rawStep));
     const base = 10 ** power;
-    if (rawStep / base > 5) return 10 * base;
-    if (rawStep / base > 2) return 5 * base;
-    if (rawStep / base > 1) return 2 * base;
+
+    if (rawStep / base > 5) {
+      return 10 * base;
+    }
+    if (rawStep / base > 2) {
+      return 5 * base;
+    }
+    if (rawStep / base > 1) {
+      return 2 * base;
+    }
     return base;
   }
 
-  function computeGridYLines(viewY, viewH, currentFlipOffset, step) {
-    const mathYMin = currentFlipOffset - (viewY + viewH);
-    const mathYMax = currentFlipOffset - viewY;
+  function computeGridYLines(viewTop, viewHeight, currentFlipOffset, step) {
+    const mathYMin = currentFlipOffset - (viewTop + viewHeight);
+    const mathYMax = currentFlipOffset - viewTop;
     const yStart = Math.floor(mathYMin / step) * step;
     const yEnd = Math.ceil(mathYMax / step) * step;
 
     const lines = [];
     const count = Math.round((yEnd - yStart) / step);
-    for (let idx = 0; idx <= count; idx += 1) {
-      const mathY = yStart + idx * step;
+
+    for (let index = 0; index <= count; index += 1) {
+      const mathY = yStart + index * step;
       const svgY = currentFlipOffset - mathY;
       lines.push({ mathY, svgY });
     }
+
     return lines;
   }
 
@@ -84,6 +90,8 @@
       return {
         top: vb.y,
         left: vb.x,
+        right: vb.x + vb.w,
+        bottom: vb.y + vb.h,
         unitPerPixelX: 1,
         unitPerPixelY: 1,
       };
@@ -109,6 +117,8 @@
       return {
         top: vb.y,
         left: vb.x,
+        right: vb.x + vb.w,
+        bottom: vb.y + vb.h,
         unitPerPixelX: vb.w / renderWidth,
         unitPerPixelY: vb.h / renderHeight,
       };
@@ -128,6 +138,8 @@
     return {
       top: topLeft.y,
       left: topLeft.x,
+      right: bottomRight.x,
+      bottom: bottomRight.y,
       unitPerPixelX: (bottomRight.x - topLeft.x) / renderWidth,
       unitPerPixelY: (bottomRight.y - topLeft.y) / renderHeight,
     };
@@ -139,72 +151,78 @@
 
     const labelsGroup = document.getElementById('grid-labels');
     labelsGroup.innerHTML = '';
+
     const viewport = getVisibleViewportMetrics();
     const edgeOffsetX = 6 * viewport.unitPerPixelX;
     const edgeOffsetY = 6 * viewport.unitPerPixelY;
     const gridLabelFontSize = 12 * viewport.unitPerPixelY;
 
-    const GRID_OVERSCAN_FACTOR = 10;
-    const step = computeGridStep(vb.w, vb.h);
+    const gridStep = computeGridStep(vb.w, vb.h);
+    const overscanFactor = 10;
 
-    const gridMinX = vb.x - vb.w * GRID_OVERSCAN_FACTOR;
-    const gridMaxX = vb.x + vb.w + vb.w * GRID_OVERSCAN_FACTOR;
-    const gridMinY = vb.y - vb.h * GRID_OVERSCAN_FACTOR;
-    const gridMaxY = vb.y + vb.h + vb.h * GRID_OVERSCAN_FACTOR;
+    const gridMinX = vb.x - vb.w * overscanFactor;
+    const gridMaxX = vb.x + vb.w + vb.w * overscanFactor;
+    const gridMinY = vb.y - vb.h * overscanFactor;
+    const gridMaxY = vb.y + vb.h + vb.h * overscanFactor;
 
     const mathGridYMin = flipOffset - gridMaxY;
     const mathGridYMax = flipOffset - gridMinY;
-    const overscannedYLines = computeGridYLines(gridMinY, gridMaxY - gridMinY, flipOffset, step);
+    const gridYLines = computeGridYLines(gridMinY, gridMaxY - gridMinY, flipOffset, gridStep);
 
-    const xStart = Math.floor(gridMinX / step) * step;
-    const xEnd = Math.ceil(gridMaxX / step) * step;
+    const xStart = Math.floor(gridMinX / gridStep) * gridStep;
+    const xEnd = Math.ceil(gridMaxX / gridStep) * gridStep;
 
-    for (let gridX = xStart; gridX <= xEnd; gridX += step) {
+    for (let gridX = xStart; gridX <= xEnd; gridX += gridStep) {
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', gridX);
-      line.setAttribute('y1', mathGridYMin);
-      line.setAttribute('x2', gridX);
-      line.setAttribute('y2', mathGridYMax);
+      line.setAttribute('x1', String(gridX));
+      line.setAttribute('y1', String(mathGridYMin));
+      line.setAttribute('x2', String(gridX));
+      line.setAttribute('y2', String(mathGridYMax));
       line.setAttribute('class', 'grid-line');
       grid.appendChild(line);
     }
 
-    for (const { mathY, svgY } of overscannedYLines) {
+    for (const gridYLine of gridYLines) {
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', gridMinX);
-      line.setAttribute('y1', mathY);
-      line.setAttribute('x2', gridMaxX);
-      line.setAttribute('y2', mathY);
+      line.setAttribute('x1', String(gridMinX));
+      line.setAttribute('y1', String(gridYLine.mathY));
+      line.setAttribute('x2', String(gridMaxX));
+      line.setAttribute('y2', String(gridYLine.mathY));
       line.setAttribute('class', 'grid-line');
       grid.appendChild(line);
 
-      if (svgY >= vb.y && svgY <= vb.y + vb.h) {
-        const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        lbl.setAttribute('x', viewport.left + edgeOffsetX);
-        lbl.setAttribute('y', svgY);
-        lbl.setAttribute('font-size', String(gridLabelFontSize));
-        lbl.setAttribute('fill', '#000');
-        lbl.setAttribute('class', 'grid-label');
-        lbl.setAttribute('text-anchor', 'start');
-        lbl.setAttribute('dominant-baseline', 'middle');
-        lbl.textContent = mathY.toFixed(0);
-        labelsGroup.appendChild(lbl);
+      // Y-подпись: по той же логике, что X-подписи. Позиция по X = vb.x + edgeOffsetX
+      // (левая граница viewBox), диапазон по Y уже покрывает весь viewBox через overscan.
+      if (gridYLine.svgY >= vb.y && gridYLine.svgY <= vb.y + vb.h) {
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', String(viewport.left - 430 * viewport.unitPerPixelX));
+        label.setAttribute('y', String(gridYLine.svgY));
+        label.setAttribute('font-size', String(gridLabelFontSize));
+        label.setAttribute('fill', '#000');
+        label.setAttribute('class', 'grid-label');
+        label.setAttribute('text-anchor', 'start');
+        label.setAttribute('dominant-baseline', 'middle');
+        label.textContent = gridYLine.mathY.toFixed(0);
+        labelsGroup.appendChild(label);
       }
     }
 
-    const labelXStart = Math.floor(vb.x / step) * step;
-    const labelXEnd = Math.ceil((vb.x + vb.w) / step) * step;
-    for (let gx = labelXStart; gx <= labelXEnd; gx += step) {
-      const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      lbl.setAttribute('x', gx + edgeOffsetX);
-      lbl.setAttribute('y', viewport.top + edgeOffsetY);
-      lbl.setAttribute('font-size', String(gridLabelFontSize));
-      lbl.setAttribute('fill', '#000');
-      lbl.setAttribute('class', 'grid-label');
-      lbl.setAttribute('text-anchor', 'start');
-      lbl.setAttribute('dominant-baseline', 'hanging');
-      lbl.textContent = gx.toFixed(0);
-      labelsGroup.appendChild(lbl);
+    // X-подписи: диапазон по всему viewBox, чтобы тянулись до краёв окна;
+    // по вертикали прижимаем к vb.y + edgeOffsetY (как в исходной рабочей версии).
+    const labelXStart = Math.floor((vb.x - vb.w) / gridStep) * gridStep;
+    const labelXEnd = Math.ceil((vb.x + vb.w + vb.w) / gridStep) * gridStep;
+
+    for (let gridX = labelXStart; gridX <= labelXEnd; gridX += gridStep) {
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', String(gridX + edgeOffsetX));
+      label.setAttribute('y', String(vb.y + edgeOffsetY));
+      label.setAttribute('font-size', String(gridLabelFontSize));
+      label.setAttribute('fill', '#000');
+      label.setAttribute('class', 'grid-label');
+      label.setAttribute('text-anchor', 'start');
+      label.setAttribute('dominant-baseline', 'hanging');
+      label.textContent = gridX.toFixed(0);
+      labelsGroup.appendChild(label);
     }
   }
 
@@ -224,22 +242,26 @@
     if (!hoverCircle) {
       return;
     }
+
     hoverCircle.remove();
     hoverCircle = null;
   }
 
   cont.addEventListener('wheel', event => {
     event.preventDefault();
+
     const factor = event.deltaY > 0 ? 1.15 : 1 / 1.15;
     const rect = svg.getBoundingClientRect();
     const mouseX = (event.clientX - rect.left) / rect.width;
     const mouseY = (event.clientY - rect.top) / rect.height;
     const newWidth = vb.w * factor;
     const newHeight = vb.h * factor;
+
     vb.x += (vb.w - newWidth) * mouseX;
     vb.y += (vb.h - newHeight) * mouseY;
     vb.w = newWidth;
     vb.h = newHeight;
+
     applyVB();
   }, { passive: false });
 
@@ -258,13 +280,16 @@
     if (!dragging) {
       return;
     }
+
     const rect = svg.getBoundingClientRect();
     const deltaX = (event.clientX - lastX) / rect.width * vb.w;
     const deltaY = (event.clientY - lastY) / rect.height * vb.h;
+
     vb.x -= deltaX;
     vb.y -= deltaY;
     lastX = event.clientX;
     lastY = event.clientY;
+
     applyVB();
   });
 
@@ -277,9 +302,16 @@
     const point = svg.createSVGPoint();
     point.x = event.clientX;
     point.y = event.clientY;
-    const svgPoint = point.matrixTransform(svg.getScreenCTM().inverse());
+
+    const screenMatrix = svg.getScreenCTM();
+    if (!screenMatrix) {
+      return;
+    }
+
+    const svgPoint = point.matrixTransform(screenMatrix.inverse());
     const worldX = svgPoint.x;
     const worldY = flipOffset - svgPoint.y;
+
     coord.textContent = `x: ${worldX.toFixed(2)}  y: ${worldY.toFixed(2)}`;
   });
 
@@ -327,13 +359,63 @@
     const color = label.getAttribute('fill');
     const rawText = label.textContent;
     const name = rawText.replace(/_\d+$/, '');
+
     if (seenNames.has(name)) {
       return;
     }
+
     seenNames.add(name);
+
     const item = document.createElement('div');
     item.className = 'legend-item';
     item.innerHTML = `<span class="legend-swatch" style="background:${color}"></span>${name}`;
     legend.appendChild(item);
   });
+
+  const LAYER_BEFORE_ID = 'layer-0';
+  const LAYER_AFTER_ID = 'layer-1';
+
+  function setLayerVisible(layerId, visible) {
+    const group = document.getElementById(layerId);
+    if (group) {
+      group.setAttribute('data-visible', visible ? 'true' : 'false');
+    }
+
+    // Лейблы связаны со слоем через data-layer (0 для before, 1 для after)
+    const layerIndex = layerId === LAYER_BEFORE_ID ? '0' : '1';
+    const labels = document.querySelectorAll(`.poly-label[data-layer="${layerIndex}"]`);
+    labels.forEach(label => {
+      label.setAttribute('data-visible', visible ? 'true' : 'false');
+    });
+  }
+
+  function applyViewMode(mode) {
+    if (mode === 'before') {
+      setLayerVisible(LAYER_BEFORE_ID, true);
+      setLayerVisible(LAYER_AFTER_ID, false);
+    } else if (mode === 'after') {
+      setLayerVisible(LAYER_BEFORE_ID, false);
+      setLayerVisible(LAYER_AFTER_ID, true);
+    } else {
+      setLayerVisible(LAYER_BEFORE_ID, true);
+      setLayerVisible(LAYER_AFTER_ID, true);
+    }
+  }
+
+  const toggleButtons = document.querySelectorAll('#view-toggle button');
+  toggleButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const mode = button.dataset.viewMode;
+      toggleButtons.forEach(other => other.classList.remove('active'));
+      button.classList.add('active');
+      applyViewMode(mode);
+    });
+  });
+
+  // Начальный режим — как у кнопки с классом .active в разметке (по умолчанию "after")
+  const initialActive = document.querySelector('#view-toggle button.active');
+  if (initialActive) {
+    applyViewMode(initialActive.dataset.viewMode);
+  }
+
 })();

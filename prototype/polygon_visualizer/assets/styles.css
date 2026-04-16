@@ -124,3 +124,40 @@ svg {
   width: 18px; height: 4px;
   border-radius: 2px;
 }
+
+#view-toggle {
+  display: flex;
+  gap: 4px;
+  border: 1px solid #000000;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#view-toggle button {
+  background: #f0fdf4;
+  border: none;
+  color: #000000;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  border-right: 1px solid #86efac;
+}
+
+#view-toggle button:last-child {
+  border-right: none;
+}
+
+#view-toggle button:hover {
+  background: #dcfce7;
+}
+
+#view-toggle button.active {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.poly-layer[data-visible="false"],
+.poly-label[data-visible="false"] {
+  display: none;
+}
