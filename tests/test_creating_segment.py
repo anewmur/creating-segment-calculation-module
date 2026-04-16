@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from creating_segment_calculation_module.creating_segment import creating_segment
+from creating_segment_calculation_module.old_creating_segment import old_creating_segment
 from creating_segment_calculation_module.models.creating_segment import CalculationInput
 from creating_segment_calculation_module.models.creating_segment import Parameter
 from creating_segment_calculation_module.models.creating_segment import Polygon
