@@ -75,18 +75,74 @@
     return lines;
   }
 
+  function getVisibleViewportMetrics() {
+    const rect = svg.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+
+    if (width <= 0 || height <= 0) {
+      return {
+        top: vb.y,
+        left: vb.x,
+        unitPerPixelX: 1,
+        unitPerPixelY: 1,
+      };
+    }
+
+    const viewAspect = vb.w / vb.h;
+    const rectAspect = width / height;
+    let renderWidth = width;
+    let renderHeight = height;
+    let offsetLeft = 0;
+    let offsetTop = 0;
+
+    if (rectAspect > viewAspect) {
+      renderWidth = height * viewAspect;
+      offsetLeft = (width - renderWidth) / 2;
+    } else {
+      renderHeight = width / viewAspect;
+      offsetTop = (height - renderHeight) / 2;
+    }
+
+    const ctm = svg.getScreenCTM();
+    if (!ctm) {
+      return {
+        top: vb.y,
+        left: vb.x,
+        unitPerPixelX: vb.w / renderWidth,
+        unitPerPixelY: vb.h / renderHeight,
+      };
+    }
+
+    const inverse = ctm.inverse();
+    const point = svg.createSVGPoint();
+
+    point.x = rect.left + offsetLeft;
+    point.y = rect.top + offsetTop;
+    const topLeft = point.matrixTransform(inverse);
+
+    point.x = rect.left + offsetLeft + renderWidth;
+    point.y = rect.top + offsetTop + renderHeight;
+    const bottomRight = point.matrixTransform(inverse);
+
+    return {
+      top: topLeft.y,
+      left: topLeft.x,
+      unitPerPixelX: (bottomRight.x - topLeft.x) / renderWidth,
+      unitPerPixelY: (bottomRight.y - topLeft.y) / renderHeight,
+    };
+  }
+
   function drawGrid() {
     const grid = document.getElementById('grid');
     grid.innerHTML = '';
 
     const labelsGroup = document.getElementById('grid-labels');
     labelsGroup.innerHTML = '';
-    const rect = svg.getBoundingClientRect();
-    const unitPerPixelX = rect.width > 0 ? vb.w / rect.width : 1;
-    const unitPerPixelY = rect.height > 0 ? vb.h / rect.height : 1;
-    const edgeOffsetX = 6 * unitPerPixelX;
-    const edgeOffsetY = 6 * unitPerPixelY;
-    const gridLabelFontSize = 12 * unitPerPixelY;
+    const viewport = getVisibleViewportMetrics();
+    const edgeOffsetX = 6 * viewport.unitPerPixelX;
+    const edgeOffsetY = 6 * viewport.unitPerPixelY;
+    const gridLabelFontSize = 12 * viewport.unitPerPixelY;
 
     const GRID_OVERSCAN_FACTOR = 10;
     const step = computeGridStep(vb.w, vb.h);
@@ -124,7 +180,7 @@
 
       if (svgY >= vb.y && svgY <= vb.y + vb.h) {
         const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        lbl.setAttribute('x', vb.x + edgeOffsetX);
+        lbl.setAttribute('x', viewport.left + edgeOffsetX);
         lbl.setAttribute('y', svgY);
         lbl.setAttribute('font-size', String(gridLabelFontSize));
         lbl.setAttribute('fill', '#000');
@@ -141,7 +197,7 @@
     for (let gx = labelXStart; gx <= labelXEnd; gx += step) {
       const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       lbl.setAttribute('x', gx + edgeOffsetX);
-      lbl.setAttribute('y', vb.y + edgeOffsetY);
+      lbl.setAttribute('y', viewport.top + edgeOffsetY);
       lbl.setAttribute('font-size', String(gridLabelFontSize));
       lbl.setAttribute('fill', '#000');
       lbl.setAttribute('class', 'grid-label');
