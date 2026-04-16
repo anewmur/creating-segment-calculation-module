@@ -7,6 +7,9 @@ from shapely.geometry import LineString
 from shapely.geometry import Point
 from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
+from shapely.errors import GEOSException
+from shapely.ops import split
+from shapely.ops import unary_union
 
 from .models.creating_segments import SEGMENT_TYPE_NAME_ENUM
 from .models.creating_segments import CalculationInput
@@ -28,6 +31,7 @@ TEMP_UNSUPPORTED_INTERSECTION_WARNING = (
 
 logger = logging.getLogger('creating_segment_calculation_module')
 POINT_DEDUP_TOLERANCE = 1e-9
+SHARED_EDGE_TOLERANCE = 1e-9
 # Допуск на «нулевую» площадь пересечения.
 # Два полигона с общей стороной теоретически пересекаются по линии (area == 0),
 # но из-за погрешности double shapely может возвращать микроскопическую
@@ -197,6 +201,23 @@ class ContainmentHandlingResult:
     outer_index: int | None = None
 
 
+class TwoPointsRebuildStatus(Enum):
+    """Результат обработки пары полигонов в ветке с двумя точками пересечения."""
+
+    rebuilt = 'rebuilt'
+    rebuild_failed = 'rebuild_failed'
+
+
+@dataclass(frozen=True, slots=True)
+class TwoPointsRebuildResult:
+    """Явный результат работы `handle_two_points_intersection`."""
+
+    status: TwoPointsRebuildStatus
+
+
+_TWO_POINTS_REBUILD_FAILED = TwoPointsRebuildResult(status=TwoPointsRebuildStatus.rebuild_failed)
+
+
 def _rebuild_outer_polygon_for_containment(outer_polygon: Polygon, inner_polygon: Polygon) -> BaseGeometry:
     """Строит внешний полигон с отверстием (выделено для тестирования ветки ошибок)."""
     return outer_polygon.difference(inner_polygon)
@@ -240,6 +261,202 @@ def handle_containment(
         status=ContainmentHandlingStatus.rebuilt,
         outer_index=outer_index,
     )
+
+
+def _as_rebuilt_polygon_or_none(geometry: BaseGeometry) -> Polygon | None:
+    """Проверяет, что итог перестройки пары — валидный одиночный Polygon."""
+    if geometry.is_empty or not geometry.is_valid:
+        return None
+    if geometry.geom_type != 'Polygon':
+        return None
+    return geometry
+
+
+def _is_polygonal_geometry(geometry: BaseGeometry) -> bool:
+    """Проверяет, что геометрия непустая, валидная и полигональная."""
+    return geometry.geom_type in {'Polygon', 'MultiPolygon'} and geometry.is_valid and not geometry.is_empty
+
+
+def _has_boundary_shared_segment(boundary_intersection: BaseGeometry) -> bool:
+    """Проверяет наличие общих линейных частей границ положительной длины."""
+    if boundary_intersection.is_empty:
+        return False
+
+    if boundary_intersection.geom_type in {'LineString', 'LinearRing'}:
+        return boundary_intersection.length > POINT_DEDUP_TOLERANCE
+
+    if boundary_intersection.geom_type == 'MultiLineString':
+        return any(part.length > POINT_DEDUP_TOLERANCE for part in boundary_intersection.geoms)
+
+    if boundary_intersection.geom_type == 'GeometryCollection':
+        return any(_has_boundary_shared_segment(part) for part in boundary_intersection.geoms)
+
+    return False
+
+
+def _collect_split_halves(overlap: BaseGeometry, cut_segment: LineString) -> list[Polygon]:
+    """Разрезает overlap и собирает валидные полигональные части."""
+    try:
+        split_result = split(overlap, cut_segment)
+    except (GEOSException, TypeError, ValueError):
+        # Для блока 4 любая ошибка split — допустимая деградация до rebuild_failed:
+        # входные геометрии могут быть топологически сложными после difference/intersection.
+        return []
+
+    halves: list[Polygon] = []
+    for geometry in split_result.geoms:
+        if geometry.geom_type != 'Polygon':
+            continue
+        if not geometry.is_valid:
+            continue
+        if geometry.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
+            continue
+        halves.append(geometry)
+
+    return halves
+
+
+def _assign_half_to_polygon(half: Polygon, only_i: BaseGeometry, only_j: BaseGeometry) -> int | None:
+    """
+    Назначает половину перекрытия полигону:
+    0 -> first polygon, 1 -> second polygon, None -> неоднозначно.
+    """
+    shared_len_with_i = half.boundary.intersection(only_i.boundary).length
+    shared_len_with_j = half.boundary.intersection(only_j.boundary).length
+
+    if shared_len_with_i > shared_len_with_j + SHARED_EDGE_TOLERANCE:
+        return 0
+    if shared_len_with_j > shared_len_with_i + SHARED_EDGE_TOLERANCE:
+        return 1
+
+    return None
+
+
+def _build_cut_segment(intersection_points: list[Point]) -> LineString | None:
+    """Строит отрезок разреза между двумя точками пересечения границ."""
+    if len(intersection_points) != 2:
+        return None
+
+    first_point, second_point = intersection_points
+    return LineString([(first_point.x, first_point.y), (second_point.x, second_point.y)])
+
+
+def _validate_two_point_rebuild_inputs(
+    poly_i: Polygon,
+    poly_j: Polygon,
+) -> tuple[BaseGeometry, BaseGeometry, BaseGeometry] | None:
+    """Готовит only/overlap и валидирует полигональность для алгоритма блока 4."""
+    only_i = poly_i.difference(poly_j)
+    only_j = poly_j.difference(poly_i)
+    overlap = poly_i.intersection(poly_j)
+
+    if not _is_polygonal_geometry(only_i):
+        return None
+    if not _is_polygonal_geometry(only_j):
+        return None
+    if not _is_polygonal_geometry(overlap):
+        return None
+
+    return only_i, only_j, overlap
+
+
+def _rebuild_polygons_from_overlap(
+    only_i: BaseGeometry,
+    only_j: BaseGeometry,
+    overlap: BaseGeometry,
+    cut_segment: LineString,
+) -> tuple[Polygon, Polygon] | None:
+    """Разрезает overlap и собирает новые полигоны для пары."""
+    halves = _collect_split_halves(overlap, cut_segment)
+    if len(halves) != 2:
+        return None
+
+    half_for_i: Polygon | None = None
+    half_for_j: Polygon | None = None
+    for half in halves:
+        assignment = _assign_half_to_polygon(half, only_i, only_j)
+        if assignment is None:
+            return None
+        if assignment == 0:
+            if half_for_i is not None:
+                return None
+            half_for_i = half
+            continue
+        if half_for_j is not None:
+            return None
+        half_for_j = half
+
+    if half_for_i is None or half_for_j is None:
+        return None
+
+    new_poly_i = _as_rebuilt_polygon_or_none(unary_union([only_i, half_for_i]))
+    new_poly_j = _as_rebuilt_polygon_or_none(unary_union([only_j, half_for_j]))
+    if new_poly_i is None or new_poly_j is None:
+        return None
+
+    return new_poly_i, new_poly_j
+
+
+def _validate_rebuilt_pair(
+    poly_i: Polygon,
+    poly_j: Polygon,
+    new_poly_i: Polygon,
+    new_poly_j: Polygon,
+) -> bool:
+    """Проверяет постусловия перестройки пары в блоке 4."""
+    if not new_poly_i.is_valid or not new_poly_j.is_valid:
+        return False
+    if new_poly_i.intersection(new_poly_j).area > BOUNDARY_TOUCH_AREA_TOLERANCE:
+        return False
+
+    union_area = poly_i.union(poly_j).area
+    if union_area <= 0:
+        return False
+
+    rebuilt_area = new_poly_i.area + new_poly_j.area
+    if abs(rebuilt_area - union_area) > 1e-6 * union_area:
+        return False
+
+    shared_boundary_length = new_poly_i.boundary.intersection(new_poly_j.boundary).length
+    return shared_boundary_length > POINT_DEDUP_TOLERANCE
+
+
+def handle_two_points_intersection(
+    polygons: list[Polygon],
+    first_index: int,
+    second_index: int,
+    intersection_points: list[Point],
+) -> TwoPointsRebuildResult:
+    """
+    Перестраивает пару полигонов в сценарии «2 точки пересечения, без общих отрезков».
+
+    Ответственность функции:
+    - выполнить алгоритм блока 4 из ТЗ для пары `first_index/second_index`;
+    - при успехе заменить оба элемента в `polygons` на новые Polygon с общим ребром;
+    - вернуть только статус операции без пользовательских warning (их формирует вызывающий код).
+    """
+    cut_segment = _build_cut_segment(intersection_points)
+    if cut_segment is None:
+        return _TWO_POINTS_REBUILD_FAILED
+
+    poly_i = polygons[first_index]
+    poly_j = polygons[second_index]
+    prepared_geometries = _validate_two_point_rebuild_inputs(poly_i, poly_j)
+    if prepared_geometries is None:
+        return _TWO_POINTS_REBUILD_FAILED
+
+    only_i, only_j, overlap = prepared_geometries
+    rebuilt_pair = _rebuild_polygons_from_overlap(only_i, only_j, overlap, cut_segment)
+    if rebuilt_pair is None:
+        return _TWO_POINTS_REBUILD_FAILED
+
+    new_poly_i, new_poly_j = rebuilt_pair
+    if not _validate_rebuilt_pair(poly_i, poly_j, new_poly_i, new_poly_j):
+        return _TWO_POINTS_REBUILD_FAILED
+
+    polygons[first_index] = new_poly_i
+    polygons[second_index] = new_poly_j
+    return TwoPointsRebuildResult(status=TwoPointsRebuildStatus.rebuilt)
 
 
 def process_intersections_rebuild(
@@ -294,6 +511,24 @@ def process_intersections_rebuild(
                         if containment_result.outer_index == polygon_index:
                             break
                     continue
+
+            if len(intersection_points) == 2 and not _has_boundary_shared_segment(boundary_intersection):
+                two_points_result = handle_two_points_intersection(
+                    polygons=polygons,
+                    first_index=polygon_index,
+                    second_index=other_index,
+                    intersection_points=intersection_points,
+                )
+                if two_points_result.status == TwoPointsRebuildStatus.rebuilt:
+                    continue
+
+                warnings.append(
+                    f'{CALCULATION_NAME}'
+                    f'Полилинии полигона {polygon_name} с пересечением в 2 точках '
+                    f'не удалось перестроить, обе полилинии исключены из расчёта.',
+                )
+                excluded_indexes.update({polygon_index, other_index})
+                break
 
             warnings.append(
                 f'{CALCULATION_NAME}'

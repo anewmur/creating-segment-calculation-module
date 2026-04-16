@@ -8,14 +8,19 @@ from shapely.geometry import LineString
 from shapely.geometry import MultiPoint
 from shapely.geometry import Point
 from shapely.geometry import Polygon
+
 from creating_segment_calculation_module.creating_segments import check_intersections
+from creating_segment_calculation_module.creating_segments import BOUNDARY_TOUCH_AREA_TOLERANCE
 from creating_segment_calculation_module.creating_segments import ContainmentHandlingStatus
+from creating_segment_calculation_module.creating_segments import TwoPointsRebuildStatus
 from creating_segment_calculation_module.creating_segments import creating_segments
 from creating_segment_calculation_module.creating_segments import extract_points
 from creating_segment_calculation_module.creating_segments import handle_containment
+from creating_segment_calculation_module.creating_segments import handle_two_points_intersection
 from creating_segment_calculation_module.creating_segments import polygon_to_polygon_line
 from creating_segment_calculation_module.creating_segments import process_intersections_rebuild
 from creating_segment_calculation_module.models.creating_segments import CalculationInput
+
 from tests.utils import Storage
 
 
@@ -261,6 +266,146 @@ def test_process_intersections_rebuild_excludes_unsupported_overlap():
     assert result == []
     assert len(warnings) == 1
     assert 'до реализации блоков 4 и 5' in warnings[0]
+
+
+def test_two_points_branch_zero_overlap_after_rebuild():
+    square_a = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    square_b = Polygon([(5, 5), (15, 5), (15, 15), (5, 15)])
+
+    result, warnings = process_intersections_rebuild([square_a, square_b], 'test')
+
+    assert len(result) == 2
+    assert warnings == []
+    assert result[0].intersection(result[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_two_points_branch_has_shared_edge():
+    square_a = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    square_b = Polygon([(5, 5), (15, 5), (15, 15), (5, 15)])
+
+    result, _ = process_intersections_rebuild([square_a, square_b], 'test')
+
+    shared_boundary = result[0].boundary.intersection(result[1].boundary)
+    assert shared_boundary.length > 0
+
+
+def test_two_points_branch_preserves_total_area():
+    square_a = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    square_b = Polygon([(5, 5), (15, 5), (15, 15), (5, 15)])
+    original_union_area = square_a.union(square_b).area
+
+    result, _ = process_intersections_rebuild([square_a, square_b], 'test')
+
+    rebuilt_area = sum(polygon.area for polygon in result)
+    assert abs(rebuilt_area - original_union_area) < 1e-6 * original_union_area
+
+
+def test_two_points_branch_splits_overlap_evenly_for_symmetric_case():
+    square_a = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    square_b = Polygon([(5, 5), (15, 5), (15, 15), (5, 15)])
+
+    only_a_area = square_a.difference(square_b).area
+    only_b_area = square_b.difference(square_a).area
+    overlap_area = square_a.intersection(square_b).area
+    expected_area = only_a_area + overlap_area / 2
+
+    result, _ = process_intersections_rebuild([square_a, square_b], 'test')
+
+    assert len(result) == 2
+    assert abs(result[0].area - expected_area) < 1e-6 * expected_area
+    assert abs(result[1].area - expected_area) < 1e-6 * expected_area
+    assert abs(only_b_area - only_a_area) < 1e-9
+
+
+def test_two_points_branch_assigns_overlap_halves_to_original_indexes():
+    polygon_a = Polygon([(0, 0), (12, 0), (12, 10), (0, 10)])
+    polygon_b = Polygon([(6, 2), (14, 2), (14, 12), (6, 12)])
+
+    result, warnings = process_intersections_rebuild([polygon_a, polygon_b], 'test')
+
+    only_a = polygon_a.difference(polygon_b)
+    only_b = polygon_b.difference(polygon_a)
+
+    assert warnings == []
+    assert result[0].intersection(only_a).area >= only_a.area - BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[1].intersection(only_b).area >= only_b.area - BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[0].intersection(only_b).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[1].intersection(only_a).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_two_points_branch_sequential_processing_clears_all_overlaps():
+    polygon_a = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    polygon_b = Polygon([(5, 5), (15, 5), (15, 15), (5, 15)])
+    polygon_c = Polygon([(-5, 5), (5, 5), (5, 15), (-5, 15)])
+
+    result, warnings = process_intersections_rebuild([polygon_a, polygon_b, polygon_c], 'test')
+
+    assert len(result) == 3
+    assert warnings == []
+
+    for first_index in range(len(result)):
+        for second_index in range(first_index + 1, len(result)):
+            overlap_area = result[first_index].intersection(result[second_index]).area
+            assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_handle_two_points_intersection_returns_rebuilt_and_mutates_list():
+    square_a = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    square_b = Polygon([(5, 5), (15, 5), (15, 15), (5, 15)])
+    polygons = [square_a, square_b]
+
+    outcome = handle_two_points_intersection(
+        polygons=polygons,
+        first_index=0,
+        second_index=1,
+        intersection_points=[Point(10, 5), Point(5, 10)],
+    )
+
+    assert outcome.status == TwoPointsRebuildStatus.rebuilt
+    assert polygons[0] is not square_a
+    assert polygons[1] is not square_b
+    assert polygons[0].intersection(polygons[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_two_points_branch_is_not_used_when_boundaries_share_segment():
+    polygon_1 = Polygon([(0, 0), (0, 500), (500, 500), (500, 0), (0, 0)])
+    polygon_2 = Polygon([(250, 0), (250, 500), (750, 500), (750, 0), (250, 0)])
+
+    result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
+
+    assert result == []
+    assert len(warnings) == 1
+    assert 'неподдерживаемым способом' in warnings[0]
+
+
+def test_two_points_entry_guard_uses_shared_segment_check(monkeypatch):
+    polygon_1 = Polygon([(0, 0), (0, 8), (8, 8), (8, 0), (0, 0)])
+    polygon_2 = Polygon([(4, -1), (4, 9), (12, 9), (12, -1), (4, -1)])
+
+    def fake_extract_points(boundary_intersection):
+        return [Point(8, 0), Point(8, 8)]
+
+    def fake_handle_two_points_intersection(polygons, first_index, second_index, intersection_points):
+        raise AssertionError('two points branch should not be called when shared segment exists')
+
+    monkeypatch.setattr(
+        'creating_segment_calculation_module.creating_segments.extract_points',
+        fake_extract_points,
+    )
+    monkeypatch.setattr(
+        'creating_segment_calculation_module.creating_segments._has_boundary_shared_segment',
+        lambda boundary_intersection: True,
+    )
+    monkeypatch.setattr(
+        'creating_segment_calculation_module.creating_segments.handle_two_points_intersection',
+        fake_handle_two_points_intersection,
+    )
+
+    result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
+
+    assert result == []
+    assert len(warnings) == 1
+    assert 'неподдерживаемым способом' in warnings[0]
 
 
 def test_process_intersections_rebuild_ignores_tiny_numerical_overlap():
