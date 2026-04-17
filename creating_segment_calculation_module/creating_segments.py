@@ -341,6 +341,15 @@ def _build_cut_segment(intersection_points: list[Point]) -> LineString | None:
     return LineString([(first_point.x, first_point.y), (second_point.x, second_point.y)])
 
 
+def _segment_matches_polygon_boundary(
+    polygon: Polygon,
+    cut_segment: LineString,
+) -> bool:
+    """Проверяет, что отрезок разреза совпадает с границей полигона с допуском."""
+    boundary_overlap = cut_segment.intersection(polygon.boundary)
+    return boundary_overlap.length >= cut_segment.length - POINT_DEDUP_TOLERANCE
+
+
 def _validate_two_point_rebuild_inputs(
     poly_i: Polygon,
     poly_j: Polygon,
@@ -397,6 +406,36 @@ def _rebuild_polygons_from_overlap(
     return new_poly_i, new_poly_j
 
 
+def _rebuild_other_by_fixed_boundary_polygon(
+    polygons: list[Polygon],
+    fixed_index: int,
+    other_index: int,
+) -> TwoPointsRebuildResult:
+    """Оставляет fixed polygon без изменений и убирает overlap у второй фигуры."""
+    fixed_polygon = polygons[fixed_index]
+    other_polygon = polygons[other_index]
+
+    new_other_geom = other_polygon.difference(fixed_polygon)
+    new_other = _as_rebuilt_polygon_or_none(new_other_geom)
+    if new_other is None:
+        return _TWO_POINTS_REBUILD_FAILED
+
+    if fixed_polygon.intersection(new_other).area > BOUNDARY_TOUCH_AREA_TOLERANCE:
+        return _TWO_POINTS_REBUILD_FAILED
+
+    union_area = fixed_polygon.union(other_polygon).area
+    if union_area <= 0:
+        return _TWO_POINTS_REBUILD_FAILED
+
+    rebuilt_area = fixed_polygon.area + new_other.area
+    if abs(rebuilt_area - union_area) > 1e-6 * union_area:
+        return _TWO_POINTS_REBUILD_FAILED
+
+    polygons[fixed_index] = fixed_polygon
+    polygons[other_index] = new_other
+    return TwoPointsRebuildResult(status=TwoPointsRebuildStatus.rebuilt)
+
+
 def _validate_rebuilt_pair(
     poly_i: Polygon,
     poly_j: Polygon,
@@ -441,6 +480,26 @@ def handle_two_points_intersection(
 
     poly_i = polygons[first_index]
     poly_j = polygons[second_index]
+    cut_on_first = _segment_matches_polygon_boundary(poly_i, cut_segment)
+    cut_on_second = _segment_matches_polygon_boundary(poly_j, cut_segment)
+
+    if cut_on_first and not cut_on_second:
+        return _rebuild_other_by_fixed_boundary_polygon(
+            polygons=polygons,
+            fixed_index=first_index,
+            other_index=second_index,
+        )
+
+    if cut_on_second and not cut_on_first:
+        return _rebuild_other_by_fixed_boundary_polygon(
+            polygons=polygons,
+            fixed_index=second_index,
+            other_index=first_index,
+        )
+
+    if cut_on_first and cut_on_second:
+        return _TWO_POINTS_REBUILD_FAILED
+
     prepared_geometries = _validate_two_point_rebuild_inputs(poly_i, poly_j)
     if prepared_geometries is None:
         return _TWO_POINTS_REBUILD_FAILED
