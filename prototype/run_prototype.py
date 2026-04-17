@@ -114,12 +114,11 @@ def main(file, merge_radius) -> None:
     print("Errors:", result.error)
 
 
-
-
 if __name__ == "__main__":
     # file = "polygon2.json"
     # file = "test_polygon_2.json"
 
-    file = "test_nested_polygon.json"
-    merge_radius=5
+    # file = "test_nested_polygon.json"
+    file = "test_itersection_polygon_with_2_dots_2.json"
+    merge_radius=1
     main(file=file, merge_radius=merge_radius)

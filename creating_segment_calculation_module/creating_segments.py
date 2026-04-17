@@ -176,10 +176,6 @@ def clip_to_model_border(
 def extract_points(geometry) -> list[Point]:
     """
     Возвращает уникальные точки пересечения.
-
-    В текущем блоке используется только количество точек. Порядок элементов в
-    результате не считается геометрически осмысленным и не должен использоваться
-    как контракт для последующей перестройки пересечений.
     """
     raw_points = _collect_points_from_geometry(geometry)
     return _deduplicate_points(raw_points)
@@ -332,12 +328,8 @@ def _assign_half_to_polygon(half: Polygon, only_i: BaseGeometry, only_j: BaseGeo
     return None
 
 
-def _build_cut_segment(intersection_points: list[Point]) -> LineString | None:
+def _build_cut_segment(first_point: Point, second_point: Point) -> LineString:
     """Строит отрезок разреза между двумя точками пересечения границ."""
-    if len(intersection_points) != 2:
-        return None
-
-    first_point, second_point = intersection_points
     return LineString([(first_point.x, first_point.y), (second_point.x, second_point.y)])
 
 
@@ -345,9 +337,8 @@ def _segment_matches_polygon_boundary(
     polygon: Polygon,
     cut_segment: LineString,
 ) -> bool:
-    """Проверяет, что отрезок разреза совпадает с границей полигона с допуском."""
-    boundary_overlap = cut_segment.intersection(polygon.boundary)
-    return boundary_overlap.length >= cut_segment.length - POINT_DEDUP_TOLERANCE
+    """Проверяет, что отрезок разреза целиком лежит на границе полигона."""
+    return polygon.boundary.buffer(POINT_DEDUP_TOLERANCE).covers(cut_segment)
 
 
 def _validate_two_point_rebuild_inputs(
@@ -464,17 +455,13 @@ def handle_two_points_intersection(
     polygons: list[Polygon],
     first_index: int,
     second_index: int,
-    intersection_points: list[Point],
+    first_intersection_point: Point,
+    second_intersection_point: Point,
 ) -> TwoPointsRebuildResult:
     """
     Перестраивает пару полигонов в сценарии «2 точки пересечения, без общих отрезков».
-
-    Ответственность функции:
-    - выполнить алгоритм блока 4 из ТЗ для пары `first_index/second_index`;
-    - при успехе заменить оба элемента в `polygons` на новые Polygon с общим ребром;
-    - вернуть только статус операции без пользовательских warning (их формирует вызывающий код).
     """
-    cut_segment = _build_cut_segment(intersection_points)
+    cut_segment = _build_cut_segment(first_intersection_point, second_intersection_point)
     if cut_segment is None:
         return _TWO_POINTS_REBUILD_FAILED
 
@@ -555,7 +542,7 @@ def process_intersections_rebuild(
             boundary_intersection = first_polygon.boundary.intersection(second_polygon.boundary)
             intersection_points = extract_points(boundary_intersection)
 
-            if len(intersection_points) == 0:
+            if first_polygon.contains(second_polygon) or second_polygon.contains(first_polygon):
                 containment_result = handle_containment(
                     polygons=polygons,
                     first_index=polygon_index,
@@ -574,16 +561,20 @@ def process_intersections_rebuild(
                             break
                     continue
 
-            if len(intersection_points) == 2 and not _has_boundary_shared_segment(boundary_intersection):
+
+            elif len(intersection_points) == 2 and not _has_boundary_shared_segment(boundary_intersection):
+                first_point, second_point = intersection_points
                 two_points_result = handle_two_points_intersection(
                     polygons=polygons,
                     first_index=polygon_index,
                     second_index=other_index,
-                    intersection_points=intersection_points,
+                    first_intersection_point=first_point,
+                    second_intersection_point=second_point,
                 )
                 if two_points_result.status == TwoPointsRebuildStatus.rebuilt:
                     continue
 
+            else:
                 warnings.append(
                     f'{CALCULATION_NAME}'
                     f'Полилинии полигона {polygon_name} с пересечением в 2 точках '
