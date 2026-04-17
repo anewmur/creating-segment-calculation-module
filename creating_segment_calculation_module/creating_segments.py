@@ -41,6 +41,7 @@ SHARED_EDGE_TOLERANCE = 1e-9
 # площади любого геометрически осмысленного пересечения (минимум в тестах —
 # 5000, запас >8 порядков).
 BOUNDARY_TOUCH_AREA_TOLERANCE = 1e-5
+PERIMETER_AREA_THRESHOLD = 0.5
 
 
 def _collect_points_from_geometry(geometry) -> list[Point]:
@@ -212,6 +213,23 @@ class TwoPointsRebuildResult:
 
 
 _TWO_POINTS_REBUILD_FAILED = TwoPointsRebuildResult(status=TwoPointsRebuildStatus.rebuild_failed)
+
+
+class ManyPointsRebuildStatus(Enum):
+    """Результат обработки пары полигонов в ветке со сложным пересечением."""
+
+    rebuilt = 'rebuilt'
+    rebuild_failed = 'rebuild_failed'
+
+
+@dataclass(frozen=True, slots=True)
+class ManyPointsRebuildResult:
+    """Явный результат работы `handle_many_points_intersection`."""
+
+    status: ManyPointsRebuildStatus
+
+
+_MANY_POINTS_REBUILD_FAILED = ManyPointsRebuildResult(status=ManyPointsRebuildStatus.rebuild_failed)
 
 
 def _rebuild_outer_polygon_for_containment(outer_polygon: Polygon, inner_polygon: Polygon) -> BaseGeometry:
@@ -505,6 +523,126 @@ def handle_two_points_intersection(
     return TwoPointsRebuildResult(status=TwoPointsRebuildStatus.rebuilt)
 
 
+def _collect_polygon_components(geometry: BaseGeometry) -> list[Polygon]:
+    """Рекурсивно собирает валидные полигональные компоненты из геометрии."""
+    polygons: list[Polygon] = []
+
+    if geometry.is_empty:
+        return polygons
+
+    if geometry.geom_type == 'Polygon':
+        if geometry.is_valid and geometry.area > BOUNDARY_TOUCH_AREA_TOLERANCE:
+            polygons.append(geometry)
+        return polygons
+
+    if geometry.geom_type == 'MultiPolygon':
+        for polygon in geometry.geoms:
+            if polygon.is_valid and polygon.area > BOUNDARY_TOUCH_AREA_TOLERANCE:
+                polygons.append(polygon)
+        return polygons
+
+    if geometry.geom_type == 'GeometryCollection':
+        for polygon in geometry.geoms:
+            polygons.extend(_collect_polygon_components(polygon))
+        return polygons
+
+    return polygons
+
+
+def _passes_perimeter_area_filter(polygon: Polygon) -> bool:
+    """Проверяет, что отношение периметра к площади не превышает порог."""
+    if not polygon.is_valid:
+        return False
+    if polygon.is_empty:
+        return False
+    if polygon.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
+        return False
+    return polygon.length / polygon.area <= PERIMETER_AREA_THRESHOLD
+
+
+def _replace_pair_with_polygons(
+    polygons: list[Polygon],
+    first_index: int,
+    second_index: int,
+    replacement_polygons: list[Polygon],
+) -> None:
+    """Заменяет пару исходных полигонов списком новых."""
+    polygons[first_index:second_index + 1] = replacement_polygons
+
+
+def handle_many_points_intersection(
+    polygons: list[Polygon],
+    first_index: int,
+    second_index: int,
+) -> ManyPointsRebuildResult:
+    """Перестраивает пару полигонов при числе точек пересечения границ > 2."""
+    poly_i = polygons[first_index]
+    poly_j = polygons[second_index]
+
+    if poly_i.area <= 0 or poly_j.area <= 0:
+        return _MANY_POINTS_REBUILD_FAILED
+
+    intersection_geom = poly_i.intersection(poly_j)
+    if intersection_geom.is_empty:
+        return _MANY_POINTS_REBUILD_FAILED
+    if not intersection_geom.is_valid:
+        return _MANY_POINTS_REBUILD_FAILED
+    if intersection_geom.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
+        return _MANY_POINTS_REBUILD_FAILED
+    if intersection_geom.geom_type not in {'Polygon', 'MultiPolygon'}:
+        return _MANY_POINTS_REBUILD_FAILED
+
+    ratio_i = intersection_geom.area / poly_i.area
+    ratio_j = intersection_geom.area / poly_j.area
+    if ratio_i <= ratio_j:
+        keeper_index = first_index
+        loser_index = second_index
+    else:
+        keeper_index = second_index
+        loser_index = first_index
+
+    keeper_polygon = polygons[keeper_index]
+    loser_polygon = polygons[loser_index]
+    loser_rebuilt_geom = loser_polygon.difference(intersection_geom)
+    loser_parts = _collect_polygon_components(loser_rebuilt_geom)
+
+    pre_filter_polygons = [keeper_polygon, *loser_parts]
+
+    for polygon in pre_filter_polygons:
+        if polygon.is_empty:
+            return _MANY_POINTS_REBUILD_FAILED
+        if not polygon.is_valid:
+            return _MANY_POINTS_REBUILD_FAILED
+        if polygon.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
+            return _MANY_POINTS_REBUILD_FAILED
+
+    for first_part_index in range(len(pre_filter_polygons)):
+        for second_part_index in range(first_part_index + 1, len(pre_filter_polygons)):
+            overlap_area = (
+                pre_filter_polygons[first_part_index]
+                .intersection(pre_filter_polygons[second_part_index])
+                .area
+            )
+            if overlap_area > BOUNDARY_TOUCH_AREA_TOLERANCE:
+                return _MANY_POINTS_REBUILD_FAILED
+
+    original_union_area = poly_i.union(poly_j).area
+    if original_union_area <= 0:
+        return _MANY_POINTS_REBUILD_FAILED
+    rebuilt_area_before_filter = sum(polygon.area for polygon in pre_filter_polygons)
+    if abs(rebuilt_area_before_filter - original_union_area) > 1e-6 * original_union_area:
+        return _MANY_POINTS_REBUILD_FAILED
+
+    replacement_polygons = [polygon for polygon in pre_filter_polygons if _passes_perimeter_area_filter(polygon)]
+    _replace_pair_with_polygons(
+        polygons=polygons,
+        first_index=first_index,
+        second_index=second_index,
+        replacement_polygons=replacement_polygons,
+    )
+    return ManyPointsRebuildResult(status=ManyPointsRebuildStatus.rebuilt)
+
+
 def process_intersections_rebuild(
     polygons: list[Polygon],
     polygon_name: str,
@@ -512,9 +650,10 @@ def process_intersections_rebuild(
     """
     Временный промежуточный режим для `process_intersections = 1`.
 
-    Реализованы две поддерживаемые ветки:
+    Реализованы три поддерживаемые ветки:
     - обработка вложенности (`n_points == 0`);
     - перестройка пары при двух точках пересечения без общего граничного сегмента (`n_points == 2`).
+    - перестройка пары при числе точек пересечения границ больше двух (`n_points > 2`).
 
     Остальные площадные пересечения пока считаются неподдерживаемыми и
     исключаются защитным поведением до реализации оставшихся блоков ТЗ.
@@ -523,70 +662,98 @@ def process_intersections_rebuild(
     polygons = list(polygons)
     excluded_indexes: set[int] = set()
 
-    for polygon_index in range(len(polygons)):
-        if polygon_index in excluded_indexes:
-            continue
-        for other_index in range(polygon_index + 1, len(polygons)):
-            if other_index in excluded_indexes:
+    while True:
+        restart_scan = False
+
+        for polygon_index in range(len(polygons)):
+            if polygon_index in excluded_indexes:
                 continue
-            first_polygon = polygons[polygon_index]
-            second_polygon = polygons[other_index]
-
-            if not first_polygon.intersects(second_polygon):
-                continue
-
-            intersection_geom = first_polygon.intersection(second_polygon)
-            if intersection_geom.is_empty or intersection_geom.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
-                continue
-
-            boundary_intersection = first_polygon.boundary.intersection(second_polygon.boundary)
-            intersection_points = extract_points(boundary_intersection)
-
-            if first_polygon.contains(second_polygon) or second_polygon.contains(first_polygon):
-                containment_result = handle_containment(
-                    polygons=polygons,
-                    first_index=polygon_index,
-                    second_index=other_index,
-                )
-                if containment_result.status == ContainmentHandlingStatus.rebuilt:
+            for other_index in range(polygon_index + 1, len(polygons)):
+                if other_index in excluded_indexes:
                     continue
-                if containment_result.status == ContainmentHandlingStatus.exclude_outer:
+                first_polygon = polygons[polygon_index]
+                second_polygon = polygons[other_index]
+
+                if not first_polygon.intersects(second_polygon):
+                    continue
+
+                intersection_geom = first_polygon.intersection(second_polygon)
+                if intersection_geom.is_empty or intersection_geom.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
+                    continue
+
+                boundary_intersection = first_polygon.boundary.intersection(second_polygon.boundary)
+                intersection_points = extract_points(boundary_intersection)
+
+                if first_polygon.contains(second_polygon) or second_polygon.contains(first_polygon):
+                    containment_result = handle_containment(
+                        polygons=polygons,
+                        first_index=polygon_index,
+                        second_index=other_index,
+                    )
+                    if containment_result.status == ContainmentHandlingStatus.rebuilt:
+                        continue
+                    if containment_result.status == ContainmentHandlingStatus.exclude_outer:
+                        warnings.append(
+                            f'{CALCULATION_NAME}'
+                            f'Полилиния полигона {polygon_name} исключена из расчёта из-за ошибки обработки вложенности.',
+                        )
+                        if containment_result.outer_index is not None:
+                            excluded_indexes.add(containment_result.outer_index)
+                            if containment_result.outer_index == polygon_index:
+                                break
+                        continue
+
+                if len(intersection_points) == 2 and not _has_boundary_shared_segment(boundary_intersection):
+                    first_point, second_point = intersection_points
+                    two_points_result = handle_two_points_intersection(
+                        polygons=polygons,
+                        first_index=polygon_index,
+                        second_index=other_index,
+                        first_intersection_point=first_point,
+                        second_intersection_point=second_point,
+                    )
+                    if two_points_result.status == TwoPointsRebuildStatus.rebuilt:
+                        continue
                     warnings.append(
                         f'{CALCULATION_NAME}'
-                        f'Полилиния полигона {polygon_name} исключена из расчёта из-за ошибки обработки вложенности.',
+                        f'Полилинии полигона {polygon_name} с пересечением в 2 точках '
+                        f'не удалось перестроить, обе полилинии исключены из расчёта.',
                     )
-                    if containment_result.outer_index is not None:
-                        excluded_indexes.add(containment_result.outer_index)
-                        if containment_result.outer_index == polygon_index:
-                            break
-                    continue
+                    excluded_indexes.update({polygon_index, other_index})
+                    break
 
-            elif len(intersection_points) == 2 and not _has_boundary_shared_segment(boundary_intersection):
-                first_point, second_point = intersection_points
-                two_points_result = handle_two_points_intersection(
-                    polygons=polygons,
-                    first_index=polygon_index,
-                    second_index=other_index,
-                    first_intersection_point=first_point,
-                    second_intersection_point=second_point,
-                )
-                if two_points_result.status == TwoPointsRebuildStatus.rebuilt:
-                    continue
-                warnings.append(
-                    f'{CALCULATION_NAME}'
-                    f'Полилинии полигона {polygon_name} с пересечением в 2 точках '
-                    f'не удалось перестроить, обе полилинии исключены из расчёта.',
-                )
-                excluded_indexes.update({polygon_index, other_index})
-                break
+                if len(intersection_points) > 2:
+                    many_points_result = handle_many_points_intersection(
+                        polygons=polygons,
+                        first_index=polygon_index,
+                        second_index=other_index,
+                    )
+                    if many_points_result.status == ManyPointsRebuildStatus.rebuilt:
+                        restart_scan = True
+                        break
+                    warnings.append(
+                        f'{CALCULATION_NAME}'
+                        f'Полилинии полигона {polygon_name} со сложным пересечением '
+                        f'не удалось перестроить, обе полилинии исключены из расчёта.',
+                    )
+                    excluded_indexes.update({polygon_index, other_index})
+                    break
 
-            else:
                 warnings.append(
                     f'{CALCULATION_NAME}'
                     f'{TEMP_UNSUPPORTED_INTERSECTION_WARNING.format(polygon_name=polygon_name)}',
                 )
                 excluded_indexes.update({polygon_index, other_index})
                 break
+
+            if restart_scan:
+                break
+
+        if restart_scan:
+            polygons = [polygon for index, polygon in enumerate(polygons) if index not in excluded_indexes]
+            excluded_indexes = set()
+            continue
+        break
 
     result_polygons = [polygon for index, polygon in enumerate(polygons) if index not in excluded_indexes]
     return result_polygons, warnings
