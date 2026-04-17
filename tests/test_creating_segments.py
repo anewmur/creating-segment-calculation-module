@@ -8,14 +8,18 @@ from shapely.geometry import LineString
 from shapely.geometry import MultiPoint
 from shapely.geometry import Point
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 from creating_segment_calculation_module.creating_segments import check_intersections
 from creating_segment_calculation_module.creating_segments import BOUNDARY_TOUCH_AREA_TOLERANCE
 from creating_segment_calculation_module.creating_segments import ContainmentHandlingStatus
+from creating_segment_calculation_module.creating_segments import ManyPointsRebuildStatus
+from creating_segment_calculation_module.creating_segments import PERIMETER_AREA_THRESHOLD
 from creating_segment_calculation_module.creating_segments import TwoPointsRebuildStatus
 from creating_segment_calculation_module.creating_segments import creating_segments
 from creating_segment_calculation_module.creating_segments import extract_points
 from creating_segment_calculation_module.creating_segments import handle_containment
+from creating_segment_calculation_module.creating_segments import handle_many_points_intersection
 from creating_segment_calculation_module.creating_segments import handle_two_points_intersection
 from creating_segment_calculation_module.creating_segments import polygon_to_polygon_line
 from creating_segment_calculation_module.creating_segments import process_intersections_rebuild
@@ -536,6 +540,198 @@ def test_process_intersections_rebuild_excludes_outer_when_containment_rebuild_r
     assert len(result) == 1
     assert abs(result[0].area - inner.area) < 1e-9
     assert len(warnings) == 1
+
+
+def test_many_points_branch_zero_overlap_after_rebuild():
+    base = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    zigzag = Polygon(
+        [
+            (80, 10), (120, 10), (120, 20), (80, 20),
+            (120, 40), (80, 40), (120, 60), (80, 60),
+            (120, 80), (80, 80), (120, 90), (80, 90),
+        ],
+    )
+
+    result, warnings = process_intersections_rebuild([base, zigzag], 'test')
+
+    assert warnings == []
+    for first_index in range(len(result)):
+        for second_index in range(first_index + 1, len(result)):
+            overlap_area = result[first_index].intersection(result[second_index]).area
+            assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_many_points_branch_preserves_all_valid_fragments():
+    polygon_a = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    polygon_b = Polygon(
+        [
+            (20, -10), (40, -10), (40, 30), (60, 30), (60, -10), (80, -10),
+            (80, 110), (60, 110), (60, 70), (40, 70), (40, 110), (20, 110),
+        ],
+    )
+
+    result, warnings = process_intersections_rebuild([polygon_a, polygon_b], 'test')
+
+    assert warnings == []
+    # Для этой пары keeper — polygon_a, а loser (polygon_b) после difference
+    # должен распасться на два валидных фрагмента (сверху и снизу).
+    # Итого ожидаем ровно 3 полигона: 1 keeper + 2 loser fragments.
+    assert len(result) == 3
+    keeper = next(polygon for polygon in result if abs(polygon.area - polygon_a.area) < 1e-6 * polygon_a.area)
+    loser_fragments = [polygon for polygon in result if polygon is not keeper]
+
+    assert len(loser_fragments) == 2
+    for fragment in loser_fragments:
+        assert fragment.is_valid
+        assert not fragment.is_empty
+        assert fragment.area > BOUNDARY_TOUCH_AREA_TOLERANCE
+
+    expected_loser_geometry = polygon_b.difference(polygon_a)
+    rebuilt_loser_geometry = unary_union(loser_fragments)
+    symmetric_diff_area = rebuilt_loser_geometry.symmetric_difference(expected_loser_geometry).area
+    assert symmetric_diff_area <= 1e-6 * expected_loser_geometry.area
+
+
+def test_many_points_more_than_four_goes_same_branch():
+    polygon_a = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    polygon_b = Polygon(
+        [
+            (90, -10), (110, -10), (110, 10), (90, 10),
+            (110, 30), (90, 30), (110, 50), (90, 50),
+            (110, 70), (90, 70), (110, 90), (90, 90),
+            (110, 110), (90, 110),
+        ],
+    )
+
+    result, warnings = process_intersections_rebuild([polygon_a, polygon_b], 'test')
+
+    assert warnings == []
+    assert len(result) >= 1
+
+
+def test_many_points_perimeter_area_filter_applied():
+    thin = Polygon([(0, 0), (1000, 0), (1000, 2), (0, 2)])
+    big = Polygon([(-10, -10), (999, -10), (999, 10), (-10, 10)])
+
+    result, warnings = process_intersections_rebuild([thin, big], 'test')
+
+    assert warnings == []
+    for polygon in result:
+        assert polygon.area > 0
+        assert polygon.length / polygon.area <= PERIMETER_AREA_THRESHOLD
+
+
+def test_many_points_branch_assigns_overlap_to_lower_damage_polygon():
+    large = Polygon([(0, 0), (200, 0), (200, 200), (0, 200)])
+    narrow = Polygon(
+        [
+            (90, -10), (110, -10), (110, 40), (90, 40),
+            (110, 80), (90, 80), (110, 120), (90, 120),
+            (110, 160), (90, 160), (110, 210), (90, 210),
+        ],
+    )
+
+    result, warnings = process_intersections_rebuild([large, narrow], 'test')
+
+    assert warnings == []
+    assert len(result) >= 1
+
+    max_area = max(polygon.area for polygon in result)
+    assert abs(max_area - large.area) < 1e-6 * large.area
+
+
+def test_handle_many_points_intersection_returns_rebuilt_and_changes_list_length():
+    polygon_a = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    polygon_b = Polygon(
+        [
+            (20, -10), (40, -10), (40, 30), (60, 30), (60, -10), (80, -10),
+            (80, 110), (60, 110), (60, 70), (40, 70), (40, 110), (20, 110),
+        ],
+    )
+    polygons = [polygon_a, polygon_b]
+
+    outcome = handle_many_points_intersection(
+        polygons=polygons,
+        first_index=0,
+        second_index=1,
+    )
+
+    assert outcome.status == ManyPointsRebuildStatus.rebuilt
+    assert len(polygons) >= 1
+
+    for first_index in range(len(polygons)):
+        for second_index in range(first_index + 1, len(polygons)):
+            overlap_area = polygons[first_index].intersection(polygons[second_index]).area
+            assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_many_points_branch_restart_scan_after_pair_replacement():
+    polygon_a = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    polygon_b = Polygon(
+        [
+            (20, -10), (40, -10), (40, 30), (60, 30), (60, -10), (80, -10),
+            (80, 110), (60, 110), (60, 70), (40, 70), (40, 110), (20, 110),
+        ],
+    )
+    polygon_c = Polygon([(70, 20), (130, 20), (130, 80), (70, 80)])
+
+    result, warnings = process_intersections_rebuild([polygon_a, polygon_b, polygon_c], 'test')
+
+    assert warnings == []
+    for first_index in range(len(result)):
+        for second_index in range(first_index + 1, len(result)):
+            overlap_area = result[first_index].intersection(result[second_index]).area
+            assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_restart_scan_keeps_previously_excluded_indexes(monkeypatch):
+    inner = Polygon([(-300, -300), (-280, -300), (-280, -280), (-300, -280)])
+    outer = Polygon([(-320, -320), (-260, -320), (-260, -260), (-320, -260)])
+    base = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    zigzag = Polygon(
+        [
+            (20, -10), (40, -10), (40, 30), (60, 30), (60, -10), (80, -10),
+            (80, 110), (60, 110), (60, 70), (40, 70), (40, 110), (20, 110),
+        ],
+    )
+
+    def fake_rebuild_outer_polygon_for_containment(outer_polygon, inner_polygon):
+        return Polygon()
+
+    monkeypatch.setattr(
+        'creating_segment_calculation_module.creating_segments._rebuild_outer_polygon_for_containment',
+        fake_rebuild_outer_polygon_for_containment,
+    )
+
+    result, warnings = process_intersections_rebuild([inner, outer, base, zigzag], 'test')
+
+    assert len(warnings) == 1
+    assert 'ошибки обработки вложенности' in warnings[0]
+    # Ожидаем: inner остаётся + пара (base, zigzag) перестраивается в 3 полигона.
+    assert len(result) == 4
+    assert any(polygon.symmetric_difference(inner).area <= BOUNDARY_TOUCH_AREA_TOLERANCE for polygon in result)
+    assert not any(polygon.symmetric_difference(outer).area <= BOUNDARY_TOUCH_AREA_TOLERANCE for polygon in result)
+
+    for first_index in range(len(result)):
+        for second_index in range(first_index + 1, len(result)):
+            overlap_area = result[first_index].intersection(result[second_index]).area
+            assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_process_intersections_rebuild_continues_after_first_failed_pair():
+    pair_one_first = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    pair_one_second = Polygon([(5, 0), (15, 0), (15, 10), (5, 10)])
+    pair_two_first = Polygon([(100, 0), (110, 0), (110, 10), (100, 10)])
+    pair_two_second = Polygon([(105, 0), (115, 0), (115, 10), (105, 10)])
+
+    result, warnings = process_intersections_rebuild(
+        [pair_one_first, pair_one_second, pair_two_first, pair_two_second],
+        'test',
+    )
+
+    assert result == []
+    assert len(warnings) == 2
+    assert all('неподдерживаемым способом' in warning for warning in warnings)
 
 
 def test_extract_points_supports_point_multipoint_and_nested_geometry_collection():
