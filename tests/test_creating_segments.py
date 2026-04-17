@@ -428,6 +428,41 @@ def test_two_points_branch_excludes_both_polygons_when_rebuild_failed(monkeypatc
         'не удалось перестроить, обе полилинии исключены из расчёта.',
     ]
 
+
+def test_two_points_branch_keeps_boundary_polygon_and_rebuilds_other():
+    polygon_left = Polygon([(0, 0), (0, 10), (8, 10), (8, 0), (0, 0)])
+    polygon_right = Polygon([(6, -2), (6, 14), (16, 14), (16, -2), (6, -2)])
+
+    result, warnings = process_intersections_rebuild([polygon_left, polygon_right], 'test')
+
+    expected_right = polygon_right.difference(polygon_left)
+
+    assert len(result) == 2
+    assert warnings == []
+    assert result[0].symmetric_difference(polygon_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[1].symmetric_difference(expected_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[0].intersection(result[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_handle_two_points_intersection_keeps_fixed_boundary_polygon_and_rebuilds_other():
+    polygon_left = Polygon([(0, 0), (0, 10), (8, 10), (8, 0), (0, 0)])
+    polygon_right = Polygon([(6, -2), (6, 14), (16, 14), (16, -2), (6, -2)])
+    polygons = [polygon_left, polygon_right]
+
+    outcome = handle_two_points_intersection(
+        polygons=polygons,
+        first_index=0,
+        second_index=1,
+        intersection_points=[Point(8, 0), Point(8, 10)],
+    )
+
+    expected_right = polygon_right.difference(polygon_left)
+
+    assert outcome.status == TwoPointsRebuildStatus.rebuilt
+    assert polygons[0].symmetric_difference(polygon_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert polygons[1].symmetric_difference(expected_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert polygons[0].intersection(polygons[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
 def test_process_intersections_rebuild_ignores_tiny_numerical_overlap():
     polygon_1 = Polygon([(0, 0), (0, 10), (10, 10), (10, 0), (0, 0)])
     polygon_2 = Polygon([(9.9999995, 0), (9.9999995, 10), (20, 10), (20, 0), (9.9999995, 0)])
