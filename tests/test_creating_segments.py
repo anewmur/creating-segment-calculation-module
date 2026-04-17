@@ -358,7 +358,8 @@ def test_handle_two_points_intersection_returns_rebuilt_and_mutates_list():
         polygons=polygons,
         first_index=0,
         second_index=1,
-        intersection_points=[Point(10, 5), Point(5, 10)],
+        first_intersection_point=Point(10, 5),
+        second_intersection_point=Point(5, 10),
     )
 
     assert outcome.status == TwoPointsRebuildStatus.rebuilt
@@ -385,7 +386,7 @@ def test_two_points_entry_guard_uses_shared_segment_check(monkeypatch):
     def fake_extract_points(boundary_intersection):
         return [Point(8, 0), Point(8, 8)]
 
-    def fake_handle_two_points_intersection(polygons, first_index, second_index, intersection_points):
+    def fake_handle_two_points_intersection(polygons, first_index, second_index, first_intersection_point, second_intersection_point):
         raise AssertionError('two points branch should not be called when shared segment exists')
 
     monkeypatch.setattr(
@@ -416,7 +417,8 @@ def test_two_points_branch_excludes_both_polygons_when_rebuild_failed(monkeypatc
 
     monkeypatch.setattr(
         'creating_segment_calculation_module.creating_segments.handle_two_points_intersection',
-        lambda polygons, first_index, second_index, intersection_points: FakeTwoPointsResult(),
+        lambda polygons, first_index, second_index, first_intersection_point,
+               second_intersection_point: FakeTwoPointsResult(),
     )
 
     result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
@@ -435,12 +437,14 @@ def test_two_points_branch_keeps_boundary_polygon_and_rebuilds_other():
 
     result, warnings = process_intersections_rebuild([polygon_left, polygon_right], 'test')
 
-    expected_right = polygon_right.difference(polygon_left)
+    # cut_segment = (6,0)-(6,10) лежит на левой грани polygon_right,
+    # значит правый (index=1) фиксируется, левый (index=0) перестраивается.
+    expected_left = polygon_left.difference(polygon_right)
 
     assert len(result) == 2
     assert warnings == []
-    assert result[0].symmetric_difference(polygon_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
-    assert result[1].symmetric_difference(expected_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[0].symmetric_difference(expected_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[1].symmetric_difference(polygon_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
     assert result[0].intersection(result[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
 
 
@@ -449,18 +453,21 @@ def test_handle_two_points_intersection_keeps_fixed_boundary_polygon_and_rebuild
     polygon_right = Polygon([(6, -2), (6, 14), (16, 14), (16, -2), (6, -2)])
     polygons = [polygon_left, polygon_right]
 
+    # Реальные точки пересечения границ для этой пары — (6,0) и (6,10),
+    # а не (8,0)/(8,10) как было раньше.
     outcome = handle_two_points_intersection(
         polygons=polygons,
         first_index=0,
         second_index=1,
-        intersection_points=[Point(8, 0), Point(8, 10)],
+        first_intersection_point=Point(6, 0),
+        second_intersection_point=Point(6, 10),
     )
 
-    expected_right = polygon_right.difference(polygon_left)
+    expected_left = polygon_left.difference(polygon_right)
 
     assert outcome.status == TwoPointsRebuildStatus.rebuilt
-    assert polygons[0].symmetric_difference(polygon_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
-    assert polygons[1].symmetric_difference(expected_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert polygons[0].symmetric_difference(expected_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert polygons[1].symmetric_difference(polygon_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
     assert polygons[0].intersection(polygons[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
 
 def test_process_intersections_rebuild_ignores_tiny_numerical_overlap():
@@ -1076,3 +1083,27 @@ def test_creating_segments_saves_polygon_with_multiple_holes():
 
         outer_polygon = next(polygon for polygon in reconstructed_polygons if len(polygon.interiors) == 2)
         assert abs(outer_polygon.area - (120 * 120 - 20 * 20 - 20 * 20)) < 1e-9
+
+
+def test_two_points_branch_handles_numerically_computed_intersection_point():
+    """
+    Воспроизводит реальный кейс после merge_by_radius: точка пересечения
+    границ вычислена численно и не лежит строго на ребре
+    Проверка cut_segment в boundary не должна быть чувствительна к float-погрешности.
+    """
+    # Геометрия такая, какой она становится ПОСЛЕ слияния
+    # (8,0) и (6,-2) с радиусом 4 в общую точку (7,-1).
+    polygon_left = Polygon([(0, 0), (0, 10), (8, 10), (7, -1), (0, 0)])
+    polygon_right = Polygon([(7, -1), (6, 14), (16, 14), (16, -2), (7, -1)])
+
+    result, warnings = process_intersections_rebuild([polygon_left, polygon_right], 'test')
+
+    # cut_segment целиком лежит на ребре (7,-1)→(6,14) правого полигона,
+    # значит правый фиксируется, левый = left.difference(right).
+    expected_left = polygon_left.difference(polygon_right)
+
+    assert len(result) == 2
+    assert warnings == []
+    assert result[0].symmetric_difference(expected_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[1].symmetric_difference(polygon_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    assert result[0].intersection(result[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE

@@ -561,7 +561,6 @@ def process_intersections_rebuild(
                             break
                     continue
 
-
             elif len(intersection_points) == 2 and not _has_boundary_shared_segment(boundary_intersection):
                 first_point, second_point = intersection_points
                 two_points_result = handle_two_points_intersection(
@@ -573,8 +572,6 @@ def process_intersections_rebuild(
                 )
                 if two_points_result.status == TwoPointsRebuildStatus.rebuilt:
                     continue
-
-            else:
                 warnings.append(
                     f'{CALCULATION_NAME}'
                     f'Полилинии полигона {polygon_name} с пересечением в 2 точках '
@@ -583,12 +580,13 @@ def process_intersections_rebuild(
                 excluded_indexes.update({polygon_index, other_index})
                 break
 
-            warnings.append(
-                f'{CALCULATION_NAME}'
-                f'{TEMP_UNSUPPORTED_INTERSECTION_WARNING.format(polygon_name=polygon_name)}',
-            )
-            excluded_indexes.update({polygon_index, other_index})
-            break
+            else:
+                warnings.append(
+                    f'{CALCULATION_NAME}'
+                    f'{TEMP_UNSUPPORTED_INTERSECTION_WARNING.format(polygon_name=polygon_name)}',
+                )
+                excluded_indexes.update({polygon_index, other_index})
+                break
 
     result_polygons = [polygon for index, polygon in enumerate(polygons) if index not in excluded_indexes]
     return result_polygons, warnings
