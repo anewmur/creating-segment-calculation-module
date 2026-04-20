@@ -285,6 +285,10 @@ def find_significant_overlaps(first_polygon: Polygon, second_polygon: Polygon) -
 
     return significant_overlaps
 
+def point_on_boundary(polygon: Polygon, point: Point, tolerance: float = 1e-9) -> bool:
+    return polygon.boundary.buffer(tolerance).covers(point)
+
+
 def classify_overlap_vertices(
     overlap_polygon: Polygon,
     first_polygon: Polygon,
@@ -311,14 +315,21 @@ def classify_overlap_vertices(
 
     return result
 
+
 def classify_significant_overlaps(
     significant_overlaps: list[Polygon],
     first_polygon: Polygon,
     second_polygon: Polygon,
 ) -> OverlapClassification:
+    """Классифицирует тип значимого пересечения двух полигонов."""
     if not significant_overlaps:
         return OverlapClassification(case=OverlapCase.no_overlap)
 
+    # 1. Явная проверка вложенности (containment)
+    if first_polygon.contains(second_polygon) or second_polygon.contains(first_polygon):
+        return OverlapClassification(case=OverlapCase.all_points_inside_one_polygon)
+
+    # 2. Анализ overlap-полигона
     for overlap_polygon in significant_overlaps:
         vertex_info = classify_overlap_vertices(
             overlap_polygon=overlap_polygon,
@@ -331,30 +342,36 @@ def classify_significant_overlaps(
         shared_boundary_vertices: list[Point] = []
 
         for item in vertex_info:
-            on_first_boundary = item["on_first_boundary"]
-            on_second_boundary = item["on_second_boundary"]
+            on_first = item["on_first_boundary"]
+            on_second = item["on_second_boundary"]
             point = item["point"]
 
-            if on_first_boundary and on_second_boundary:
+            if on_first and on_second:
                 shared_boundary_vertex_count += 1
-                coord_x, coord_y = point
-                shared_boundary_vertices.append(Point(coord_x, coord_y))
+                shared_boundary_vertices.append(Point(*point))
             else:
                 inside_vertex_count += 1
 
-        if shared_boundary_vertex_count == 0:
-            return OverlapClassification(case=OverlapCase.all_points_inside_one_polygon)
-
+        # Случай 3-вершинного оверлапа (треугольник) → блок 4
         if len(vertex_info) == 3 and shared_boundary_vertex_count == 2 and inside_vertex_count == 1:
-            return OverlapClassification(
-                case=OverlapCase.candidate_block_4,
-                shared_boundary_vertices=(shared_boundary_vertices[0], shared_boundary_vertices[1]),
-            )
+            boundary_cross = first_polygon.boundary.intersection(second_polygon.boundary)
+            has_linear_component = False
+            geoms = boundary_cross.geoms if hasattr(boundary_cross, "geoms") else [boundary_cross]
+            for geom in geoms:
+                if geom.geom_type in ("LineString", "MultiLineString"):
+                    has_linear_component = True
+                    break
+            if not has_linear_component:
+                return OverlapClassification(
+                    case=OverlapCase.candidate_block_4,
+                    shared_boundary_vertices=(shared_boundary_vertices[0], shared_boundary_vertices[1]),
+                )
 
-        if len(vertex_info) > 3 or shared_boundary_vertex_count > 2:
+        # Все остальные случаи (включая 4-вершинные, >4 вершин, общие отрезки) → блок 5
+        if len(vertex_info) > 2:
             return OverlapClassification(case=OverlapCase.candidate_block_5)
 
-    return OverlapClassification(case=OverlapCase.unsupported)
+    return OverlapClassification(case=OverlapCase.no_overlap)
 
 
 def _classify_pair(first_polygon: Polygon, second_polygon: Polygon) -> OverlapClassification:

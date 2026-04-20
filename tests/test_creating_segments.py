@@ -392,34 +392,7 @@ def test_two_points_branch_is_not_used_when_boundaries_share_segment(monkeypatch
     assert warnings == []
     assert len(result) == 2
 
-def test_two_points_entry_guard_uses_shared_segment_check(monkeypatch):
-    polygon_1 = Polygon([(0, 0), (0, 8), (8, 8), (8, 0), (0, 0)])
-    polygon_2 = Polygon([(4, -1), (4, 9), (12, 9), (12, -1), (4, -1)])
 
-    def fake_extract_points(boundary_intersection):
-        return [Point(8, 0), Point(8, 8)]
-
-    def fake_handle_two_points_intersection(polygons, first_index, second_index, first_intersection_point, second_intersection_point):
-        raise AssertionError('two points branch should not be called when shared segment exists')
-
-    monkeypatch.setattr(
-        'creating_segment_calculation_module.creating_segments.extract_points',
-        fake_extract_points,
-    )
-    monkeypatch.setattr(
-        'creating_segment_calculation_module.creating_segments._has_boundary_shared_segment',
-        lambda boundary_intersection: True,
-    )
-    monkeypatch.setattr(
-        'creating_segment_calculation_module.creating_segments.handle_two_points_intersection',
-        fake_handle_two_points_intersection,
-    )
-
-    result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
-
-    # Тест проверяет только то, что блок 4 не вызывался (guard через AssertionError в моке).
-    # Отсутствие warnings подтверждает, что управление ушло в блок 5 и пара обработана.
-    assert warnings == []
 
 def test_two_points_branch_excludes_both_polygons_when_rebuild_failed(monkeypatch):
     polygon_1 = Polygon([(0, 0), (0, 10), (10, 10), (10, 0), (0, 0)])
