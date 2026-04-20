@@ -6,9 +6,6 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import split
 from shapely.ops import unary_union
 
-from ..models.enumirations import TwoPointsRebuildStatus
-
-
 class TwoPointsOverlapHandler:
     """Обрабатывает пересечение пары в сценарии двух граничных точек."""
 
@@ -126,29 +123,29 @@ class TwoPointsOverlapHandler:
         polygons: list[Polygon],
         fixed_index: int,
         other_index: int,
-    ) -> TwoPointsRebuildStatus:
+    ) -> bool:
         fixed_polygon = polygons[fixed_index]
         other_polygon = polygons[other_index]
 
         new_other_geom = other_polygon.difference(fixed_polygon)
         new_other = self._as_rebuilt_polygon_or_none(new_other_geom)
         if new_other is None:
-            return TwoPointsRebuildStatus.rebuild_failed
+            return False
 
         if fixed_polygon.intersection(new_other).area > self._boundary_touch_area_tolerance:
-            return TwoPointsRebuildStatus.rebuild_failed
+            return False
 
         union_area = fixed_polygon.union(other_polygon).area
         if union_area <= 0:
-            return TwoPointsRebuildStatus.rebuild_failed
+            return False
 
         rebuilt_area = fixed_polygon.area + new_other.area
         if abs(rebuilt_area - union_area) > 1e-6 * union_area:
-            return TwoPointsRebuildStatus.rebuild_failed
+            return False
 
         polygons[fixed_index] = fixed_polygon
         polygons[other_index] = new_other
-        return TwoPointsRebuildStatus.rebuilt
+        return True
 
     def _validate_rebuilt_pair(
         self,
@@ -180,7 +177,7 @@ class TwoPointsOverlapHandler:
         second_index: int,
         first_intersection_point: Point,
         second_intersection_point: Point,
-    ) -> TwoPointsRebuildStatus:
+    ) -> bool:
         """Перестраивает пару в сценарии двух точек пересечения границ."""
         cut_segment = self._build_cut_segment(first_intersection_point, second_intersection_point)
 
@@ -204,21 +201,21 @@ class TwoPointsOverlapHandler:
             )
 
         if cut_on_first and cut_on_second:
-            return TwoPointsRebuildStatus.rebuild_failed
+            return False
 
         prepared_geometries = self._validate_two_point_rebuild_inputs(poly_i, poly_j)
         if prepared_geometries is None:
-            return TwoPointsRebuildStatus.rebuild_failed
+            return False
 
         only_i, only_j, overlap = prepared_geometries
         rebuilt_pair = self._rebuild_polygons_from_overlap(only_i, only_j, overlap, cut_segment)
         if rebuilt_pair is None:
-            return TwoPointsRebuildStatus.rebuild_failed
+            return False
 
         new_poly_i, new_poly_j = rebuilt_pair
         if not self._validate_rebuilt_pair(poly_i, poly_j, new_poly_i, new_poly_j):
-            return TwoPointsRebuildStatus.rebuild_failed
+            return False
 
         polygons[first_index] = new_poly_i
         polygons[second_index] = new_poly_j
-        return TwoPointsRebuildStatus.rebuilt
+        return True

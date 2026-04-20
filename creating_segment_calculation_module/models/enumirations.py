@@ -26,18 +26,3 @@ class ContainmentHandlingResult:
     status: ContainmentHandlingStatus
     outer_index: int | None = None
 
-
-class TwoPointsRebuildStatus(Enum):
-    """Результат обработки пары полигонов в ветке с двумя точками пересечения."""
-    rebuilt = 'rebuilt'
-    rebuild_failed = 'rebuild_failed'
-
-
-
-class ManyPointsRebuildStatus(Enum):
-    """Результат обработки пары полигонов в ветке со сложным пересечением."""
-
-    rebuilt = 'rebuilt'
-    rebuild_failed = 'rebuild_failed'
-
-

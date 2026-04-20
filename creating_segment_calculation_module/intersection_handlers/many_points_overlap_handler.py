@@ -2,9 +2,6 @@ from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from ..models.enumirations import ManyPointsRebuildStatus
-
-
 class ManyPointsOverlapHandler:
     """Обрабатывает сложные пересечения пары полигонов."""
 
@@ -161,14 +158,14 @@ class ManyPointsOverlapHandler:
         polygons: list[Polygon],
         first_index: int,
         second_index: int,
-    ) -> ManyPointsRebuildStatus:
+    ) -> bool:
         """Перестраивает пару в ветке сложного (многоточечного) пересечения."""
         poly_i = polygons[first_index]
         poly_j = polygons[second_index]
 
         intersection_geom = self._get_valid_intersection_geometry(poly_i, poly_j)
         if intersection_geom is None:
-            return ManyPointsRebuildStatus.rebuild_failed
+            return False
 
         keeper_index, loser_index = self._select_keeper_and_loser_indexes(
             poly_i,
@@ -185,13 +182,13 @@ class ManyPointsOverlapHandler:
             intersection_geom,
         )
         if pre_filter_polygons is None:
-            return ManyPointsRebuildStatus.rebuild_failed
+            return False
 
         if not self._polygons_have_no_significant_overlap(pre_filter_polygons):
-            return ManyPointsRebuildStatus.rebuild_failed
+            return False
 
         if not self._areas_match_original_union(poly_i, poly_j, pre_filter_polygons):
-            return ManyPointsRebuildStatus.rebuild_failed
+            return False
 
         replacement_polygons = self._filter_replacement_polygons(pre_filter_polygons)
         self._replace_pair_with_polygons(
@@ -200,4 +197,4 @@ class ManyPointsOverlapHandler:
             second_index=second_index,
             replacement_polygons=replacement_polygons,
         )
-        return ManyPointsRebuildStatus.rebuilt
+        return True

@@ -13,9 +13,7 @@ from shapely.ops import unary_union
 from creating_segment_calculation_module.creating_segments import check_intersections
 from creating_segment_calculation_module.creating_segments import BOUNDARY_TOUCH_AREA_TOLERANCE
 from creating_segment_calculation_module.creating_segments import ContainmentHandlingStatus
-from creating_segment_calculation_module.creating_segments import ManyPointsRebuildStatus
 from creating_segment_calculation_module.creating_segments import PERIMETER_AREA_THRESHOLD
-from creating_segment_calculation_module.creating_segments import TwoPointsRebuildStatus
 from creating_segment_calculation_module.creating_segments import creating_segments
 from creating_segment_calculation_module.creating_segments import handle_containment
 from creating_segment_calculation_module.creating_segments import handle_many_points_intersection
@@ -370,7 +368,7 @@ def test_handle_two_points_intersection_returns_rebuilt_and_mutates_list():
         second_intersection_point=Point(5, 10),
     )
 
-    assert outcome.status == TwoPointsRebuildStatus.rebuilt
+    assert outcome is True
     assert polygons[0] is not square_a
     assert polygons[1] is not square_b
     assert polygons[0].intersection(polygons[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
@@ -427,20 +425,14 @@ def test_two_points_branch_excludes_both_polygons_when_rebuild_failed(monkeypatc
     polygon_1 = Polygon([(0, 0), (0, 10), (10, 10), (10, 0), (0, 0)])
     polygon_2 = Polygon([(5, 5), (5, 15), (15, 15), (15, 5), (5, 5)])
 
-    class FakeTwoPointsResult:
-        status = TwoPointsRebuildStatus.rebuild_failed
-
-    class FakeManyPointsResult:
-        status = ManyPointsRebuildStatus.rebuild_failed
-
     monkeypatch.setattr(
         'creating_segment_calculation_module.creating_segments.handle_two_points_intersection',
         lambda polygons, first_index, second_index, first_intersection_point,
-               second_intersection_point: FakeTwoPointsResult(),
+               second_intersection_point: False,
     )
     monkeypatch.setattr(
         'creating_segment_calculation_module.creating_segments.handle_many_points_intersection',
-        lambda polygons, first_index, second_index: FakeManyPointsResult(),
+        lambda polygons, first_index, second_index: False,
     )
 
     result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
@@ -508,7 +500,7 @@ def test_handle_two_points_intersection_keeps_fixed_boundary_polygon_and_rebuild
 
     expected_left = polygon_left.difference(polygon_right)
 
-    assert outcome.status == TwoPointsRebuildStatus.rebuilt
+    assert outcome is True
     assert polygons[0].symmetric_difference(expected_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
     assert polygons[1].symmetric_difference(polygon_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
     assert polygons[0].intersection(polygons[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
@@ -672,7 +664,7 @@ def test_handle_many_points_intersection_returns_rebuilt_and_changes_list_length
         second_index=1,
     )
 
-    assert outcome.status == ManyPointsRebuildStatus.rebuilt
+    assert outcome is True
     assert len(polygons) >= 1
 
     for first_index in range(len(polygons)):
