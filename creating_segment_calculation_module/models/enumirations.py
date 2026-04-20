@@ -2,6 +2,7 @@ from enum import Enum
 from dataclasses import dataclass
 
 class OverlapCase(Enum):
+    no_overlap = "no_overlap"
     all_points_inside_one_polygon = "all_points_inside_one_polygon"
     candidate_block_4 = "candidate_block_4"
     candidate_block_5 = "candidate_block_5"
