@@ -134,41 +134,6 @@ def clip_to_model_border(
     return result_polygons, warnings
 
 
-def extract_points(geometry) -> list[Point]:
-    """Возвращает уникальные точки из геометрии пересечения.
-
-    Args:
-        geometry: Произвольная геометрия Shapely.
-
-    Returns:
-        Упорядоченный список уникальных точек.
-    """
-
-    def collect_points(source_geometry) -> list[Point]:
-        if source_geometry.is_empty:
-            return []
-        if source_geometry.geom_type == 'Point':
-            return [source_geometry]
-        if source_geometry.geom_type == 'MultiPoint':
-            return list(source_geometry.geoms)
-        if not hasattr(source_geometry, 'geoms'):
-            return []
-
-        points: list[Point] = []
-        for part in source_geometry.geoms:
-            points.extend(collect_points(part))
-        return points
-
-    def is_same_point(first_point: Point, second_point: Point, tolerance: float = POINT_DEDUP_TOLERANCE) -> bool:
-        return abs(first_point.x - second_point.x) <= tolerance and abs(first_point.y - second_point.y) <= tolerance
-
-    unique_points: list[Point] = []
-    for point in collect_points(geometry):
-        if any(is_same_point(point, unique_point) for unique_point in unique_points):
-            continue
-        unique_points.append(point)
-    return unique_points
-
 def _rebuild_outer_polygon_for_containment(outer_polygon: Polygon, inner_polygon: Polygon) -> BaseGeometry:
     """Строит внешний полигон с отверстием (выделено для тестирования ветки ошибок)."""
     return outer_polygon.difference(inner_polygon)
