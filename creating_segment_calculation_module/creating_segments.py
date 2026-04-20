@@ -2,7 +2,7 @@ import json
 import logging
 from dataclasses import dataclass
 from enum import Enum
-
+from typing import cast
 from shapely.geometry import LineString
 from shapely.geometry import Point
 from shapely.geometry import Polygon
@@ -10,7 +10,10 @@ from shapely.geometry.base import BaseGeometry
 from shapely.errors import GEOSException
 from shapely.ops import split
 from shapely.ops import unary_union
-
+from .models.enumirations import (
+    TwoPointsRebuildStatus, ManyPointsRebuildStatus, ContainmentHandlingResult,
+    ContainmentHandlingStatus, OverlapCase
+)
 from prototype.polygon_visualizer.handle_viz import plot_geometries_debug
 from .models.creating_segments import SEGMENT_TYPE_NAME_ENUM
 from .models.creating_segments import CalculationInput
@@ -40,6 +43,8 @@ SHARED_EDGE_TOLERANCE = 1e-9
 BOUNDARY_TOUCH_AREA_TOLERANCE = 1e-5
 PERIMETER_AREA_THRESHOLD = 0.5
 
+_TWO_POINTS_REBUILD_FAILED = TwoPointsRebuildStatus.rebuild_failed
+_MANY_POINTS_REBUILD_FAILED = ManyPointsRebuildStatus.rebuild_failed
 
 def _collect_points_from_geometry(geometry) -> list[Point]:
     """Рекурсивно извлекает Point в порядке обхода геометрии."""
@@ -179,54 +184,6 @@ def extract_points(geometry) -> list[Point]:
     return _deduplicate_points(raw_points)
 
 
-class ContainmentHandlingStatus(Enum):
-    """Результат обработки пары полигонов как потенциальной вложенности."""
-
-    not_containment = 'not_containment'
-    rebuilt = 'rebuilt'
-    exclude_outer = 'exclude_outer'
-
-
-@dataclass(frozen=True, slots=True)
-class ContainmentHandlingResult:
-    """Явный результат обработки пары полигонов в режиме вложенности."""
-
-    status: ContainmentHandlingStatus
-    outer_index: int | None = None
-
-
-class TwoPointsRebuildStatus(Enum):
-    """Результат обработки пары полигонов в ветке с двумя точками пересечения."""
-
-    rebuilt = 'rebuilt'
-    rebuild_failed = 'rebuild_failed'
-
-
-@dataclass(frozen=True, slots=True)
-class TwoPointsRebuildResult:
-    """Явный результат работы `handle_two_points_intersection`."""
-
-    status: TwoPointsRebuildStatus
-
-
-_TWO_POINTS_REBUILD_FAILED = TwoPointsRebuildResult(status=TwoPointsRebuildStatus.rebuild_failed)
-
-
-class ManyPointsRebuildStatus(Enum):
-    """Результат обработки пары полигонов в ветке со сложным пересечением."""
-
-    rebuilt = 'rebuilt'
-    rebuild_failed = 'rebuild_failed'
-
-
-@dataclass(frozen=True, slots=True)
-class ManyPointsRebuildResult:
-    """Явный результат работы `handle_many_points_intersection`."""
-
-    status: ManyPointsRebuildStatus
-
-
-_MANY_POINTS_REBUILD_FAILED = ManyPointsRebuildResult(status=ManyPointsRebuildStatus.rebuild_failed)
 
 
 def _rebuild_outer_polygon_for_containment(outer_polygon: Polygon, inner_polygon: Polygon) -> BaseGeometry:
@@ -416,7 +373,7 @@ def _rebuild_other_by_fixed_boundary_polygon(
     polygons: list[Polygon],
     fixed_index: int,
     other_index: int,
-) -> TwoPointsRebuildResult:
+) -> TwoPointsRebuildStatus:
     """Оставляет fixed polygon без изменений и убирает overlap у второй фигуры."""
     fixed_polygon = polygons[fixed_index]
     other_polygon = polygons[other_index]
@@ -439,7 +396,7 @@ def _rebuild_other_by_fixed_boundary_polygon(
 
     polygons[fixed_index] = fixed_polygon
     polygons[other_index] = new_other
-    return TwoPointsRebuildResult(status=TwoPointsRebuildStatus.rebuilt)
+    return TwoPointsRebuildStatus.rebuilt
 
 
 def _validate_rebuilt_pair(
@@ -472,7 +429,7 @@ def handle_two_points_intersection(
     second_index: int,
     first_intersection_point: Point,
     second_intersection_point: Point,
-) -> TwoPointsRebuildResult:
+) -> TwoPointsRebuildStatus:
     """
     Перестраивает пару полигонов в сценарии «2 точки пересечения, без общих отрезков».
     """
@@ -574,47 +531,57 @@ def _replace_pair_with_polygons(
 
 
 
-def handle_many_points_intersection(
-    polygons: list[Polygon],
-    first_index: int,
-    second_index: int,
-) -> ManyPointsRebuildResult:
-    """Перестраивает пару полигонов при числе точек пересечения границ > 2."""
-    poly_i = polygons[first_index]
-    poly_j = polygons[second_index]
-
+def _get_valid_intersection_geometry(
+    poly_i: Polygon,
+    poly_j: Polygon,
+) -> BaseGeometry | None:
+    """Возвращает валидное полигональное пересечение."""
     if poly_i.area <= 0 or poly_j.area <= 0:
-        return _MANY_POINTS_REBUILD_FAILED
+        return None
 
     intersection_geom = poly_i.intersection(poly_j)
     if intersection_geom.is_empty:
-        return _MANY_POINTS_REBUILD_FAILED
+        return None
     if not intersection_geom.is_valid:
-        return _MANY_POINTS_REBUILD_FAILED
+        return None
 
-    # GeometryCollection возникает, когда помимо площадного перекрытия
-    # границы имеют общие линейные/точечные куски. Оставляем только площадную часть —
-    # шум по границе не влияет на difference().
     if intersection_geom.geom_type == 'GeometryCollection':
         polygonal_parts = _collect_polygon_components(intersection_geom)
         if not polygonal_parts:
-            return _MANY_POINTS_REBUILD_FAILED
+            return None
         intersection_geom = unary_union(polygonal_parts)
 
     if intersection_geom.geom_type not in {'Polygon', 'MultiPolygon'}:
-        return _MANY_POINTS_REBUILD_FAILED
+        return None
     if intersection_geom.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
-        return _MANY_POINTS_REBUILD_FAILED
+        return None
 
+    return intersection_geom
+
+
+def _select_keeper_and_loser_indexes(
+    poly_i: Polygon,
+    poly_j: Polygon,
+    intersection_geom: BaseGeometry,
+    first_index: int,
+    second_index: int,
+) -> tuple[int, int]:
+    """Выбирает сохраняемый и перестраиваемый полигоны."""
     ratio_i = intersection_geom.area / poly_i.area
     ratio_j = intersection_geom.area / poly_j.area
-    if ratio_i <= ratio_j:
-        keeper_index = first_index
-        loser_index = second_index
-    else:
-        keeper_index = second_index
-        loser_index = first_index
 
+    if ratio_i <= ratio_j:
+        return first_index, second_index
+    return second_index, first_index
+
+
+def _build_pre_filter_polygons(
+    polygons: list[Polygon],
+    keeper_index: int,
+    loser_index: int,
+    intersection_geom: BaseGeometry,
+) -> list[Polygon] | None:
+    """Строит полигоны до фильтра отношения периметра к площади."""
     keeper_polygon = polygons[keeper_index]
     loser_polygon = polygons[loser_index]
     loser_rebuilt_geom = loser_polygon.difference(intersection_geom)
@@ -624,37 +591,102 @@ def handle_many_points_intersection(
 
     for polygon in pre_filter_polygons:
         if polygon.is_empty:
-            return _MANY_POINTS_REBUILD_FAILED
+            return None
         if not polygon.is_valid:
-            return _MANY_POINTS_REBUILD_FAILED
+            return None
         if polygon.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
-            return _MANY_POINTS_REBUILD_FAILED
+            return None
 
-    for first_part_index in range(len(pre_filter_polygons)):
-        for second_part_index in range(first_part_index + 1, len(pre_filter_polygons)):
+    return pre_filter_polygons
+
+
+def _polygons_have_no_significant_overlap(
+    polygons: list[Polygon],
+) -> bool:
+    """Проверяет отсутствие значимого overlap между полигонами."""
+    for first_part_index in range(len(polygons)):
+        for second_part_index in range(first_part_index + 1, len(polygons)):
             overlap_area = (
-                pre_filter_polygons[first_part_index]
-                .intersection(pre_filter_polygons[second_part_index])
+                polygons[first_part_index]
+                .intersection(polygons[second_part_index])
                 .area
             )
             if overlap_area > BOUNDARY_TOUCH_AREA_TOLERANCE:
-                return _MANY_POINTS_REBUILD_FAILED
+                return False
+    return True
 
+
+def _areas_match_original_union(
+    poly_i: Polygon,
+    poly_j: Polygon,
+    rebuilt_polygons: list[Polygon],
+) -> bool:
+    """Проверяет сохранение суммарной площади объединения."""
     original_union_area = poly_i.union(poly_j).area
     if original_union_area <= 0:
-        return _MANY_POINTS_REBUILD_FAILED
-    rebuilt_area_before_filter = sum(polygon.area for polygon in pre_filter_polygons)
-    if abs(rebuilt_area_before_filter - original_union_area) > 1e-6 * original_union_area:
+        return False
+
+    rebuilt_area = sum(polygon.area for polygon in rebuilt_polygons)
+    return abs(rebuilt_area - original_union_area) <= 1e-6 * original_union_area
+
+
+def _filter_replacement_polygons(
+    polygons: list[Polygon],
+) -> list[Polygon]:
+    """Оставляет полигоны, прошедшие фильтр формы."""
+    replacement_polygons: list[Polygon] = []
+
+    for polygon in polygons:
+        if _passes_perimeter_area_filter(polygon):
+            replacement_polygons.append(polygon)
+
+    return replacement_polygons
+
+
+def handle_many_points_intersection(
+    polygons: list[Polygon],
+    first_index: int,
+    second_index: int,
+) -> ManyPointsRebuildStatus:
+    """Перестраивает пару при сложном пересечении."""
+    poly_i = polygons[first_index]
+    poly_j = polygons[second_index]
+
+    intersection_geom = _get_valid_intersection_geometry(poly_i, poly_j)
+    if intersection_geom is None:
         return _MANY_POINTS_REBUILD_FAILED
 
-    replacement_polygons = [polygon for polygon in pre_filter_polygons if _passes_perimeter_area_filter(polygon)]
+    keeper_index, loser_index = _select_keeper_and_loser_indexes(
+        poly_i,
+        poly_j,
+        intersection_geom,
+        first_index,
+        second_index,
+    )
+
+    pre_filter_polygons = _build_pre_filter_polygons(
+        polygons,
+        keeper_index,
+        loser_index,
+        intersection_geom,
+    )
+    if pre_filter_polygons is None:
+        return _MANY_POINTS_REBUILD_FAILED
+
+    if not _polygons_have_no_significant_overlap(pre_filter_polygons):
+        return _MANY_POINTS_REBUILD_FAILED
+
+    if not _areas_match_original_union(poly_i, poly_j, pre_filter_polygons):
+        return _MANY_POINTS_REBUILD_FAILED
+
+    replacement_polygons = _filter_replacement_polygons(pre_filter_polygons)
     _replace_pair_with_polygons(
         polygons=polygons,
         first_index=first_index,
         second_index=second_index,
         replacement_polygons=replacement_polygons,
     )
-    return ManyPointsRebuildResult(status=ManyPointsRebuildStatus.rebuilt)
+    return ManyPointsRebuildStatus.rebuilt
 
 
 def _pair_has_significant_area_overlap(
@@ -729,7 +761,135 @@ class _PairDispatchResult:
     excluded_indexes: frozenset[int] = frozenset()
 
 
+def collect_polygon_components(geometry: BaseGeometry) -> list[Polygon]:
+    polygons: list[Polygon] = []
+
+    if geometry.is_empty:
+        return polygons
+
+    if geometry.geom_type == "Polygon":
+        polygons.append(cast(Polygon, geometry))
+        return polygons
+
+    if geometry.geom_type == "MultiPolygon":
+        for polygon in geometry.geoms:
+            polygons.append(cast(Polygon, polygon))
+        return polygons
+
+    if geometry.geom_type == "GeometryCollection":
+        for part in geometry.geoms:
+            polygons.extend(collect_polygon_components(part))
+        return polygons
+
+    return polygons
+
+def point_on_boundary(polygon: Polygon, point: Point, tolerance: float = 1e-9) -> bool:
+    return polygon.boundary.buffer(tolerance).covers(point)
+
+
+def find_significant_overlaps(first_polygon, second_polygon):
+    intersection_geometry = first_polygon.intersection(second_polygon)
+
+    overlap_polygons = collect_polygon_components(intersection_geometry)
+
+    plot_geometries_debug(
+        [
+            ("first boundary", overlap_polygons[0].boundary),
+        ],
+        title="boundary debug",
+    )
+
+    epsilon = 1e-5
+    significant_overlaps = []
+
+    for polygon in overlap_polygons:
+        if polygon.area > epsilon:
+            significant_overlaps.append(polygon)
+
+    return significant_overlaps
+
+def classify_overlap_vertices(
+    overlap_polygon: Polygon,
+    first_polygon: Polygon,
+    second_polygon: Polygon,
+    tolerance: float = 1e-9,
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+
+    for coord_x, coord_y in overlap_polygon.exterior.coords[:-1]:
+        point = Point(coord_x, coord_y)
+
+        on_first_boundary = point_on_boundary(first_polygon, point, tolerance)
+        on_second_boundary = point_on_boundary(second_polygon, point, tolerance)
+
+        result.append(
+            {
+                "point": (coord_x, coord_y),
+                "on_first_boundary": on_first_boundary,
+                "on_second_boundary": on_second_boundary,
+                "inside_first": not on_first_boundary,
+                "inside_second": not on_second_boundary,
+            }
+        )
+
+    return result
+
+def classify_significant_overlaps(
+    significant_overlaps: list[Polygon],
+    first_polygon: Polygon,
+    second_polygon: Polygon,
+) -> OverlapCase:
+    for overlap_polygon in significant_overlaps:
+        vertex_info = classify_overlap_vertices(
+            overlap_polygon=overlap_polygon,
+            first_polygon=first_polygon,
+            second_polygon=second_polygon,
+        )
+
+        shared_boundary_vertex_count = 0
+        inside_vertex_count = 0
+
+        for item in vertex_info:
+            on_first_boundary = item["on_first_boundary"]
+            on_second_boundary = item["on_second_boundary"]
+
+            if on_first_boundary and on_second_boundary:
+                shared_boundary_vertex_count += 1
+            else:
+                inside_vertex_count += 1
+
+        if shared_boundary_vertex_count == 0:
+            return OverlapCase.all_points_inside_one_polygon
+
+        if len(vertex_info) == 3 and shared_boundary_vertex_count == 2 and inside_vertex_count == 1:
+            return OverlapCase.candidate_block_4
+
+        if len(vertex_info) > 3 or shared_boundary_vertex_count > 2:
+            return OverlapCase.candidate_block_5
+
+    return OverlapCase.unsupported
+
 def _dispatch_pair(
+    polygons: list[Polygon],
+    first_index: int,
+    second_index: int,
+    polygon_name: str,
+    warnings: list[str],
+) -> _PairDispatchResult:
+    first_polygon = polygons[first_index]
+    second_polygon = polygons[second_index]
+
+    significant_overlaps = find_significant_overlaps(first_polygon, second_polygon)
+
+    for overlap_polygon in significant_overlaps:
+        OverlapCase = classify_significant_overlaps(
+            significant_overlaps=significant_overlaps,
+            first_polygon=first_polygon,
+            second_polygon=second_polygon,
+        )
+    return _PairDispatchResult(outcome=_PairOutcome.excluded)
+
+def _dispatch_pair_old(
     polygons: list[Polygon],
     first_index: int,
     second_index: int,
