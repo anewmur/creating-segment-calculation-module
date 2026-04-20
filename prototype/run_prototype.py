@@ -125,5 +125,5 @@ if __name__ == "__main__":
     # file = "test_intersection_poligon_many_points_1.json"
     # file = "test_intersection_poligon_many_points_2.json"
 
-    merge_radius=15
+    merge_radius=10
     main(file=file, merge_radius=merge_radius)

@@ -11,6 +11,7 @@ from shapely.errors import GEOSException
 from shapely.ops import split
 from shapely.ops import unary_union
 
+from prototype.polygon_visualizer.handle_viz import plot_geometries_debug
 from .models.creating_segments import SEGMENT_TYPE_NAME_ENUM
 from .models.creating_segments import CalculationInput
 from .models.creating_segments import CalculationResult
@@ -744,7 +745,18 @@ def _dispatch_pair(
     second_polygon = polygons[second_index]
 
     boundary_intersection = first_polygon.boundary.intersection(second_polygon.boundary)
+
+    plot_geometries_debug(
+        [
+            ("first boundary", first_polygon.boundary),
+            ("second boundary", second_polygon.boundary),
+            ("intersection", boundary_intersection),
+        ],
+        title="boundary debug",
+    )
     intersection_points = extract_points(boundary_intersection)
+
+
 
     if first_polygon.contains(second_polygon) or second_polygon.contains(first_polygon):
         containment_result = handle_containment(
@@ -784,6 +796,8 @@ def _dispatch_pair(
         return _PairDispatchResult(outcome=_PairOutcome.rebuilt_with_restart)
 
     warnings.append(_build_rebuild_failed_warning(polygon_name))
+
+
     return _PairDispatchResult(
         outcome=_PairOutcome.excluded,
         excluded_indexes=frozenset({first_index, second_index}),
@@ -809,7 +823,6 @@ def process_intersections_rebuild(
         for polygon_index in range(len(polygons)):
             if polygon_index in excluded_indexes:
                 continue
-            stop_outer_pairs = False
             for other_index in range(polygon_index + 1, len(polygons)):
                 if other_index in excluded_indexes:
                     continue
@@ -818,7 +831,7 @@ def process_intersections_rebuild(
                     polygons[other_index],
                 ):
                     continue
-
+                # вызов диспетчера обработки пары полигонов.
                 dispatch = _dispatch_pair(
                     polygons=polygons,
                     first_index=polygon_index,
@@ -837,12 +850,8 @@ def process_intersections_rebuild(
                     dispatch.outcome == _PairOutcome.containment_failure_outer_excluded
                     and polygon_index in dispatch.excluded_indexes
                 ):
-                    # Текущий outer больше не годится для последующих пар.
-                    stop_outer_pairs = True
                     break
                 if dispatch.outcome == _PairOutcome.excluded:
-                    # Текущий polygon_index тоже исключён — дальше с ним сравнивать не нужно.
-                    stop_outer_pairs = True
                     break
 
             if restart_scan:
@@ -855,6 +864,8 @@ def process_intersections_rebuild(
         break
 
     return [p for i, p in enumerate(polygons) if i not in excluded_indexes], warnings
+
+
 def check_intersections(polygons: list[Polygon], polygon_name: str) -> tuple[list[Polygon], list[str]]:
     """Проверяет полигоны на пересечения и последовательно обрабатывает пары."""
     warnings: list[str] = []
@@ -1264,6 +1275,7 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
             )
             warning_msgs.extend(merge_warnings)
             info_msgs.extend(merge_infos)
+
 
         if not polygons:
             error_msgs.append(
