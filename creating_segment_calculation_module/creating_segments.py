@@ -7,14 +7,10 @@ from shapely.geometry import LineString
 from shapely.geometry import Point
 from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
-from shapely.errors import GEOSException
-from shapely.ops import split
-from shapely.ops import unary_union
 from .models.enumirations import (
     TwoPointsRebuildStatus, ManyPointsRebuildStatus, ContainmentHandlingResult,
     ContainmentHandlingStatus, OverlapCase
 )
-from prototype.polygon_visualizer.handle_viz import plot_geometries_debug
 from .models.creating_segments import SEGMENT_TYPE_NAME_ENUM
 from .models.creating_segments import CalculationInput
 from .models.creating_segments import CalculationResult
@@ -25,7 +21,9 @@ from .models.creating_segments import PolygonLine
 from .models.creating_segments import PolygonValue
 from .models.creating_segments import Segment
 from .models.creating_segments import TargetPoint
-
+from .intersection_handlers.containment_handler import ContainmentHandler
+from .intersection_handlers.many_points_overlap_handler import ManyPointsOverlapHandler
+from .intersection_handlers.two_points_overlap_handler import TwoPointsOverlapHandler
 
 CALCULATION_NAME = 'Расчёт сегментов\n'
 
@@ -42,9 +40,6 @@ SHARED_EDGE_TOLERANCE = 1e-9
 # 5000, запас >8 порядков).
 BOUNDARY_TOUCH_AREA_TOLERANCE = 1e-5
 PERIMETER_AREA_THRESHOLD = 0.5
-
-_TWO_POINTS_REBUILD_FAILED = TwoPointsRebuildStatus.rebuild_failed
-_MANY_POINTS_REBUILD_FAILED = ManyPointsRebuildStatus.rebuild_failed
 
 def _collect_points_from_geometry(geometry) -> list[Point]:
     """Рекурсивно извлекает Point в порядке обхода геометрии."""
@@ -184,11 +179,28 @@ def extract_points(geometry) -> list[Point]:
     return _deduplicate_points(raw_points)
 
 
-
-
 def _rebuild_outer_polygon_for_containment(outer_polygon: Polygon, inner_polygon: Polygon) -> BaseGeometry:
     """Строит внешний полигон с отверстием (выделено для тестирования ветки ошибок)."""
     return outer_polygon.difference(inner_polygon)
+
+
+def _build_containment_handler() -> ContainmentHandler:
+    return ContainmentHandler(rebuild_outer_polygon=_rebuild_outer_polygon_for_containment)
+
+
+def _build_two_points_handler() -> TwoPointsOverlapHandler:
+    return TwoPointsOverlapHandler(
+        point_dedup_tolerance=POINT_DEDUP_TOLERANCE,
+        shared_edge_tolerance=SHARED_EDGE_TOLERANCE,
+        boundary_touch_area_tolerance=BOUNDARY_TOUCH_AREA_TOLERANCE,
+    )
+
+
+def _build_many_points_handler() -> ManyPointsOverlapHandler:
+    return ManyPointsOverlapHandler(
+        boundary_touch_area_tolerance=BOUNDARY_TOUCH_AREA_TOLERANCE,
+        perimeter_area_threshold=PERIMETER_AREA_THRESHOLD,
+    )
 
 
 def handle_containment(
@@ -196,53 +208,52 @@ def handle_containment(
     first_index: int,
     second_index: int,
 ) -> ContainmentHandlingResult:
-    """Обрабатывает вложенность: внутренний полигон остаётся, внешний получает отверстие."""
-    first_polygon = polygons[first_index]
-    second_polygon = polygons[second_index]
-
-    if first_polygon.contains(second_polygon):
-        outer_index = first_index
-        inner_index = second_index
-    elif second_polygon.contains(first_polygon):
-        outer_index = second_index
-        inner_index = first_index
-    else:
-        return ContainmentHandlingResult(status=ContainmentHandlingStatus.not_containment)
-
-    outer_polygon = polygons[outer_index]
-    inner_polygon = polygons[inner_index]
-    rebuilt_outer = _rebuild_outer_polygon_for_containment(outer_polygon, inner_polygon)
-
-    if (
-        rebuilt_outer.is_empty
-        or rebuilt_outer.geom_type != 'Polygon'
-        or not rebuilt_outer.is_valid
-        or len(rebuilt_outer.interiors) < 1
-    ):
-        return ContainmentHandlingResult(
-            status=ContainmentHandlingStatus.exclude_outer,
-            outer_index=outer_index,
-        )
-
-    polygons[outer_index] = rebuilt_outer
-    return ContainmentHandlingResult(
-        status=ContainmentHandlingStatus.rebuilt,
-        outer_index=outer_index,
+    return _build_containment_handler().handle(
+        polygons=polygons,
+        first_index=first_index,
+        second_index=second_index,
     )
 
 
-def _as_rebuilt_polygon_or_none(geometry: BaseGeometry) -> Polygon | None:
-    """Проверяет, что итог перестройки пары — валидный одиночный Polygon."""
-    if geometry.is_empty or not geometry.is_valid:
-        return None
-    if geometry.geom_type != 'Polygon':
-        return None
-    return geometry
+def handle_two_points_intersection(
+    polygons: list[Polygon],
+    first_index: int,
+    second_index: int,
+    first_intersection_point: Point,
+    second_intersection_point: Point,
+) -> TwoPointsRebuildStatus:
+    return _build_two_points_handler().handle(
+        polygons=polygons,
+        first_index=first_index,
+        second_index=second_index,
+        first_intersection_point=first_intersection_point,
+        second_intersection_point=second_intersection_point,
+    )
 
 
-def _is_polygonal_geometry(geometry: BaseGeometry) -> bool:
-    """Проверяет, что геометрия непустая, валидная и полигональная."""
-    return geometry.geom_type in {'Polygon', 'MultiPolygon'} and geometry.is_valid and not geometry.is_empty
+def handle_many_points_intersection(
+    polygons: list[Polygon],
+    first_index: int,
+    second_index: int,
+) -> ManyPointsRebuildStatus:
+    return _build_many_points_handler().handle(
+        polygons=polygons,
+        first_index=first_index,
+        second_index=second_index,
+    )
+
+
+def _pair_has_significant_area_overlap(
+    first_polygon: Polygon,
+    second_polygon: Polygon,
+) -> bool:
+    """Проверяет, что пара имеет площадное пересечение выше допуска шума на границе."""
+    if not first_polygon.intersects(second_polygon):
+        return False
+    intersection_geom = first_polygon.intersection(second_polygon)
+    if intersection_geom.is_empty:
+        return False
+    return intersection_geom.area > BOUNDARY_TOUCH_AREA_TOLERANCE
 
 
 def _has_boundary_shared_segment(boundary_intersection: BaseGeometry) -> bool:
@@ -260,446 +271,6 @@ def _has_boundary_shared_segment(boundary_intersection: BaseGeometry) -> bool:
         return any(_has_boundary_shared_segment(part) for part in boundary_intersection.geoms)
 
     return False
-
-
-def _collect_split_halves(overlap: BaseGeometry, cut_segment: LineString) -> list[Polygon]:
-    """Разрезает overlap и собирает валидные полигональные части."""
-    try:
-        split_result = split(overlap, cut_segment)
-    except (GEOSException, TypeError, ValueError):
-        # Для блока 4 любая ошибка split — допустимая деградация до rebuild_failed:
-        # входные геометрии могут быть топологически сложными после difference/intersection.
-        return []
-
-    halves: list[Polygon] = []
-    for geometry in split_result.geoms:
-        if geometry.geom_type != 'Polygon':
-            continue
-        if not geometry.is_valid:
-            continue
-        if geometry.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
-            continue
-        halves.append(geometry)
-
-    return halves
-
-
-def _assign_half_to_polygon(half: Polygon, only_i: BaseGeometry, only_j: BaseGeometry) -> int | None:
-    """
-    Назначает половину перекрытия полигону:
-    0 -> first polygon, 1 -> second polygon, None -> неоднозначно.
-    """
-    shared_len_with_i = half.boundary.intersection(only_i.boundary).length
-    shared_len_with_j = half.boundary.intersection(only_j.boundary).length
-
-    if shared_len_with_i > shared_len_with_j + SHARED_EDGE_TOLERANCE:
-        return 0
-    if shared_len_with_j > shared_len_with_i + SHARED_EDGE_TOLERANCE:
-        return 1
-
-    return None
-
-
-def _build_cut_segment(first_point: Point, second_point: Point) -> LineString:
-    """Строит отрезок разреза между двумя точками пересечения границ."""
-    return LineString([(first_point.x, first_point.y), (second_point.x, second_point.y)])
-
-
-def _segment_matches_polygon_boundary(
-    polygon: Polygon,
-    cut_segment: LineString,
-) -> bool:
-    """Проверяет, что отрезок разреза целиком лежит на границе полигона."""
-    return polygon.boundary.buffer(POINT_DEDUP_TOLERANCE).covers(cut_segment)
-
-
-def _validate_two_point_rebuild_inputs(
-    poly_i: Polygon,
-    poly_j: Polygon,
-) -> tuple[BaseGeometry, BaseGeometry, BaseGeometry] | None:
-    """Готовит only/overlap и валидирует полигональность для алгоритма блока 4."""
-    only_i = poly_i.difference(poly_j)
-    only_j = poly_j.difference(poly_i)
-    overlap = poly_i.intersection(poly_j)
-
-    if not _is_polygonal_geometry(only_i):
-        return None
-    if not _is_polygonal_geometry(only_j):
-        return None
-    if not _is_polygonal_geometry(overlap):
-        return None
-
-    return only_i, only_j, overlap
-
-
-def _rebuild_polygons_from_overlap(
-    only_i: BaseGeometry,
-    only_j: BaseGeometry,
-    overlap: BaseGeometry,
-    cut_segment: LineString,
-) -> tuple[Polygon, Polygon] | None:
-    """Разрезает overlap и собирает новые полигоны для пары."""
-    halves = _collect_split_halves(overlap, cut_segment)
-    if len(halves) != 2:
-        return None
-
-    half_for_i: Polygon | None = None
-    half_for_j: Polygon | None = None
-    for half in halves:
-        assignment = _assign_half_to_polygon(half, only_i, only_j)
-        if assignment is None:
-            return None
-        if assignment == 0:
-            if half_for_i is not None:
-                return None
-            half_for_i = half
-            continue
-        if half_for_j is not None:
-            return None
-        half_for_j = half
-
-    if half_for_i is None or half_for_j is None:
-        return None
-
-    new_poly_i = _as_rebuilt_polygon_or_none(unary_union([only_i, half_for_i]))
-    new_poly_j = _as_rebuilt_polygon_or_none(unary_union([only_j, half_for_j]))
-    if new_poly_i is None or new_poly_j is None:
-        return None
-
-    return new_poly_i, new_poly_j
-
-
-def _rebuild_other_by_fixed_boundary_polygon(
-    polygons: list[Polygon],
-    fixed_index: int,
-    other_index: int,
-) -> TwoPointsRebuildStatus:
-    """Оставляет fixed polygon без изменений и убирает overlap у второй фигуры."""
-    fixed_polygon = polygons[fixed_index]
-    other_polygon = polygons[other_index]
-
-    new_other_geom = other_polygon.difference(fixed_polygon)
-    new_other = _as_rebuilt_polygon_or_none(new_other_geom)
-    if new_other is None:
-        return _TWO_POINTS_REBUILD_FAILED
-
-    if fixed_polygon.intersection(new_other).area > BOUNDARY_TOUCH_AREA_TOLERANCE:
-        return _TWO_POINTS_REBUILD_FAILED
-
-    union_area = fixed_polygon.union(other_polygon).area
-    if union_area <= 0:
-        return _TWO_POINTS_REBUILD_FAILED
-
-    rebuilt_area = fixed_polygon.area + new_other.area
-    if abs(rebuilt_area - union_area) > 1e-6 * union_area:
-        return _TWO_POINTS_REBUILD_FAILED
-
-    polygons[fixed_index] = fixed_polygon
-    polygons[other_index] = new_other
-    return TwoPointsRebuildStatus.rebuilt
-
-
-def _validate_rebuilt_pair(
-    poly_i: Polygon,
-    poly_j: Polygon,
-    new_poly_i: Polygon,
-    new_poly_j: Polygon,
-) -> bool:
-    """Проверяет постусловия перестройки пары в блоке 4."""
-    if not new_poly_i.is_valid or not new_poly_j.is_valid:
-        return False
-    if new_poly_i.intersection(new_poly_j).area > BOUNDARY_TOUCH_AREA_TOLERANCE:
-        return False
-
-    union_area = poly_i.union(poly_j).area
-    if union_area <= 0:
-        return False
-
-    rebuilt_area = new_poly_i.area + new_poly_j.area
-    if abs(rebuilt_area - union_area) > 1e-6 * union_area:
-        return False
-
-    shared_boundary_length = new_poly_i.boundary.intersection(new_poly_j.boundary).length
-    return shared_boundary_length > POINT_DEDUP_TOLERANCE
-
-
-def handle_two_points_intersection(
-    polygons: list[Polygon],
-    first_index: int,
-    second_index: int,
-    first_intersection_point: Point,
-    second_intersection_point: Point,
-) -> TwoPointsRebuildStatus:
-    """
-    Перестраивает пару полигонов в сценарии «2 точки пересечения, без общих отрезков».
-    """
-    cut_segment = _build_cut_segment(first_intersection_point, second_intersection_point)
-    if cut_segment is None:
-        return _TWO_POINTS_REBUILD_FAILED
-
-    poly_i = polygons[first_index]
-    poly_j = polygons[second_index]
-    cut_on_first = _segment_matches_polygon_boundary(poly_i, cut_segment)
-    cut_on_second = _segment_matches_polygon_boundary(poly_j, cut_segment)
-
-    if cut_on_first and not cut_on_second:
-        return _rebuild_other_by_fixed_boundary_polygon(
-            polygons=polygons,
-            fixed_index=first_index,
-            other_index=second_index,
-        )
-
-    if cut_on_second and not cut_on_first:
-        return _rebuild_other_by_fixed_boundary_polygon(
-            polygons=polygons,
-            fixed_index=second_index,
-            other_index=first_index,
-        )
-
-    if cut_on_first and cut_on_second:
-        return _TWO_POINTS_REBUILD_FAILED
-
-    prepared_geometries = _validate_two_point_rebuild_inputs(poly_i, poly_j)
-    if prepared_geometries is None:
-        return _TWO_POINTS_REBUILD_FAILED
-
-    only_i, only_j, overlap = prepared_geometries
-    rebuilt_pair = _rebuild_polygons_from_overlap(only_i, only_j, overlap, cut_segment)
-    if rebuilt_pair is None:
-        return _TWO_POINTS_REBUILD_FAILED
-
-    new_poly_i, new_poly_j = rebuilt_pair
-    if not _validate_rebuilt_pair(poly_i, poly_j, new_poly_i, new_poly_j):
-        return _TWO_POINTS_REBUILD_FAILED
-
-    polygons[first_index] = new_poly_i
-    polygons[second_index] = new_poly_j
-    return TwoPointsRebuildResult(status=TwoPointsRebuildStatus.rebuilt)
-
-
-def _collect_polygon_components(geometry: BaseGeometry) -> list[Polygon]:
-    """Рекурсивно собирает валидные полигональные компоненты из геометрии."""
-    polygons: list[Polygon] = []
-
-    if geometry.is_empty:
-        return polygons
-
-    if geometry.geom_type == 'Polygon':
-        if geometry.is_valid and geometry.area > BOUNDARY_TOUCH_AREA_TOLERANCE:
-            polygons.append(geometry)
-        return polygons
-
-    if geometry.geom_type == 'MultiPolygon':
-        for polygon in geometry.geoms:
-            if polygon.is_valid and polygon.area > BOUNDARY_TOUCH_AREA_TOLERANCE:
-                polygons.append(polygon)
-        return polygons
-
-    if geometry.geom_type == 'GeometryCollection':
-        for polygon in geometry.geoms:
-            polygons.extend(_collect_polygon_components(polygon))
-        return polygons
-
-    return polygons
-
-
-def _passes_perimeter_area_filter(polygon: Polygon) -> bool:
-    """Проверяет, что отношение периметра к площади не превышает порог."""
-    if not polygon.is_valid:
-        return False
-    if polygon.is_empty:
-        return False
-    if polygon.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
-        return False
-    return polygon.length / polygon.area <= PERIMETER_AREA_THRESHOLD
-
-
-def _replace_pair_with_polygons(
-    polygons: list[Polygon],
-    first_index: int,
-    second_index: int,
-    replacement_polygons: list[Polygon],
-) -> None:
-    """Заменяет пару исходных полигонов списком новых. Индексы могут быть несоседними."""
-    # Удаляем с большего индекса, чтобы не сдвинуть меньший.
-    larger_index = max(first_index, second_index)
-    smaller_index = min(first_index, second_index)
-    del polygons[larger_index]
-    del polygons[smaller_index]
-    polygons[smaller_index:smaller_index] = replacement_polygons
-
-
-
-
-def _get_valid_intersection_geometry(
-    poly_i: Polygon,
-    poly_j: Polygon,
-) -> BaseGeometry | None:
-    """Возвращает валидное полигональное пересечение."""
-    if poly_i.area <= 0 or poly_j.area <= 0:
-        return None
-
-    intersection_geom = poly_i.intersection(poly_j)
-    if intersection_geom.is_empty:
-        return None
-    if not intersection_geom.is_valid:
-        return None
-
-    if intersection_geom.geom_type == 'GeometryCollection':
-        polygonal_parts = _collect_polygon_components(intersection_geom)
-        if not polygonal_parts:
-            return None
-        intersection_geom = unary_union(polygonal_parts)
-
-    if intersection_geom.geom_type not in {'Polygon', 'MultiPolygon'}:
-        return None
-    if intersection_geom.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
-        return None
-
-    return intersection_geom
-
-
-def _select_keeper_and_loser_indexes(
-    poly_i: Polygon,
-    poly_j: Polygon,
-    intersection_geom: BaseGeometry,
-    first_index: int,
-    second_index: int,
-) -> tuple[int, int]:
-    """Выбирает сохраняемый и перестраиваемый полигоны."""
-    ratio_i = intersection_geom.area / poly_i.area
-    ratio_j = intersection_geom.area / poly_j.area
-
-    if ratio_i <= ratio_j:
-        return first_index, second_index
-    return second_index, first_index
-
-
-def _build_pre_filter_polygons(
-    polygons: list[Polygon],
-    keeper_index: int,
-    loser_index: int,
-    intersection_geom: BaseGeometry,
-) -> list[Polygon] | None:
-    """Строит полигоны до фильтра отношения периметра к площади."""
-    keeper_polygon = polygons[keeper_index]
-    loser_polygon = polygons[loser_index]
-    loser_rebuilt_geom = loser_polygon.difference(intersection_geom)
-    loser_parts = _collect_polygon_components(loser_rebuilt_geom)
-
-    pre_filter_polygons = [keeper_polygon, *loser_parts]
-
-    for polygon in pre_filter_polygons:
-        if polygon.is_empty:
-            return None
-        if not polygon.is_valid:
-            return None
-        if polygon.area <= BOUNDARY_TOUCH_AREA_TOLERANCE:
-            return None
-
-    return pre_filter_polygons
-
-
-def _polygons_have_no_significant_overlap(
-    polygons: list[Polygon],
-) -> bool:
-    """Проверяет отсутствие значимого overlap между полигонами."""
-    for first_part_index in range(len(polygons)):
-        for second_part_index in range(first_part_index + 1, len(polygons)):
-            overlap_area = (
-                polygons[first_part_index]
-                .intersection(polygons[second_part_index])
-                .area
-            )
-            if overlap_area > BOUNDARY_TOUCH_AREA_TOLERANCE:
-                return False
-    return True
-
-
-def _areas_match_original_union(
-    poly_i: Polygon,
-    poly_j: Polygon,
-    rebuilt_polygons: list[Polygon],
-) -> bool:
-    """Проверяет сохранение суммарной площади объединения."""
-    original_union_area = poly_i.union(poly_j).area
-    if original_union_area <= 0:
-        return False
-
-    rebuilt_area = sum(polygon.area for polygon in rebuilt_polygons)
-    return abs(rebuilt_area - original_union_area) <= 1e-6 * original_union_area
-
-
-def _filter_replacement_polygons(
-    polygons: list[Polygon],
-) -> list[Polygon]:
-    """Оставляет полигоны, прошедшие фильтр формы."""
-    replacement_polygons: list[Polygon] = []
-
-    for polygon in polygons:
-        if _passes_perimeter_area_filter(polygon):
-            replacement_polygons.append(polygon)
-
-    return replacement_polygons
-
-
-def handle_many_points_intersection(
-    polygons: list[Polygon],
-    first_index: int,
-    second_index: int,
-) -> ManyPointsRebuildStatus:
-    """Перестраивает пару при сложном пересечении."""
-    poly_i = polygons[first_index]
-    poly_j = polygons[second_index]
-
-    intersection_geom = _get_valid_intersection_geometry(poly_i, poly_j)
-    if intersection_geom is None:
-        return _MANY_POINTS_REBUILD_FAILED
-
-    keeper_index, loser_index = _select_keeper_and_loser_indexes(
-        poly_i,
-        poly_j,
-        intersection_geom,
-        first_index,
-        second_index,
-    )
-
-    pre_filter_polygons = _build_pre_filter_polygons(
-        polygons,
-        keeper_index,
-        loser_index,
-        intersection_geom,
-    )
-    if pre_filter_polygons is None:
-        return _MANY_POINTS_REBUILD_FAILED
-
-    if not _polygons_have_no_significant_overlap(pre_filter_polygons):
-        return _MANY_POINTS_REBUILD_FAILED
-
-    if not _areas_match_original_union(poly_i, poly_j, pre_filter_polygons):
-        return _MANY_POINTS_REBUILD_FAILED
-
-    replacement_polygons = _filter_replacement_polygons(pre_filter_polygons)
-    _replace_pair_with_polygons(
-        polygons=polygons,
-        first_index=first_index,
-        second_index=second_index,
-        replacement_polygons=replacement_polygons,
-    )
-    return ManyPointsRebuildStatus.rebuilt
-
-
-def _pair_has_significant_area_overlap(
-    first_polygon: Polygon,
-    second_polygon: Polygon,
-) -> bool:
-    """Проверяет, что пара имеет площадное пересечение выше допуска шума на границе."""
-    if not first_polygon.intersects(second_polygon):
-        return False
-    intersection_geom = first_polygon.intersection(second_polygon)
-    if intersection_geom.is_empty:
-        return False
-    return intersection_geom.area > BOUNDARY_TOUCH_AREA_TOLERANCE
 
 
 def _try_handle_two_points_branch(
@@ -724,7 +295,7 @@ def _try_handle_two_points_branch(
         first_intersection_point=first_point,
         second_intersection_point=second_point,
     )
-    return outcome.status == TwoPointsRebuildStatus.rebuilt
+    return outcome == TwoPointsRebuildStatus.rebuilt
 
 
 def _build_rebuild_failed_warning(polygon_name: str) -> str:
@@ -787,17 +358,10 @@ def point_on_boundary(polygon: Polygon, point: Point, tolerance: float = 1e-9) -
     return polygon.boundary.buffer(tolerance).covers(point)
 
 
-def find_significant_overlaps(first_polygon, second_polygon):
+def find_significant_overlaps(first_polygon: Polygon, second_polygon: Polygon) -> list[Polygon]:
     intersection_geometry = first_polygon.intersection(second_polygon)
 
     overlap_polygons = collect_polygon_components(intersection_geometry)
-
-    plot_geometries_debug(
-        [
-            ("first boundary", overlap_polygons[0].boundary),
-        ],
-        title="boundary debug",
-    )
 
     epsilon = 1e-5
     significant_overlaps = []
@@ -876,47 +440,9 @@ def _dispatch_pair(
     polygon_name: str,
     warnings: list[str],
 ) -> _PairDispatchResult:
+    """Тонкий диспетчер: классификация case -> вызов нужного обработчика."""
     first_polygon = polygons[first_index]
     second_polygon = polygons[second_index]
-
-    significant_overlaps = find_significant_overlaps(first_polygon, second_polygon)
-
-    for overlap_polygon in significant_overlaps:
-        OverlapCase = classify_significant_overlaps(
-            significant_overlaps=significant_overlaps,
-            first_polygon=first_polygon,
-            second_polygon=second_polygon,
-        )
-    return _PairDispatchResult(outcome=_PairOutcome.excluded)
-
-def _dispatch_pair_old(
-    polygons: list[Polygon],
-    first_index: int,
-    second_index: int,
-    polygon_name: str,
-    warnings: list[str],
-) -> _PairDispatchResult:
-    """Подбирает подходящий блок обработки для пары и применяет его.
-
-    Порядок: containment → блок 4 → блок 5 как универсальный fallback.
-    Побочные эффекты: warnings пополняется при исключениях.
-    """
-    first_polygon = polygons[first_index]
-    second_polygon = polygons[second_index]
-
-    boundary_intersection = first_polygon.boundary.intersection(second_polygon.boundary)
-
-    plot_geometries_debug(
-        [
-            ("first boundary", first_polygon.boundary),
-            ("second boundary", second_polygon.boundary),
-            ("intersection", boundary_intersection),
-        ],
-        title="boundary debug",
-    )
-    intersection_points = extract_points(boundary_intersection)
-
-
 
     if first_polygon.contains(second_polygon) or second_polygon.contains(first_polygon):
         containment_result = handle_containment(
@@ -934,30 +460,37 @@ def _dispatch_pair_old(
                 outcome=_PairOutcome.containment_failure_outer_excluded,
                 excluded_indexes=excluded,
             )
-        # not_containment: проваливаемся дальше по алгоритму.
 
-    if _try_handle_two_points_branch(
-        polygons=polygons,
-        first_index=first_index,
-        second_index=second_index,
-        intersection_points=intersection_points,
-        boundary_intersection=boundary_intersection,
-    ):
-        return _PairDispatchResult(outcome=_PairOutcome.rebuilt_in_place)
+    boundary_intersection = first_polygon.boundary.intersection(second_polygon.boundary)
+    intersection_points = extract_points(boundary_intersection)
+    significant_overlaps = find_significant_overlaps(first_polygon, second_polygon)
+    overlap_case = classify_significant_overlaps(
+        significant_overlaps=significant_overlaps,
+        first_polygon=first_polygon,
+        second_polygon=second_polygon,
+    )
 
-    # Блок 5 — универсальный fallback. Он меняет длину списка полигонов,
-    # поэтому при успехе внешний цикл обязан перезапустить скан.
+    if overlap_case == OverlapCase.candidate_block_4:
+        if _try_handle_two_points_branch(
+            polygons=polygons,
+            first_index=first_index,
+            second_index=second_index,
+            intersection_points=intersection_points,
+            boundary_intersection=boundary_intersection,
+        ):
+            return _PairDispatchResult(outcome=_PairOutcome.rebuilt_in_place)
+
+    # Для all_points_inside_one_polygon и unsupported здесь сознательный fallback в block 5:
+    # это универсальная ветка перестройки, если containment/branch-4 не сработали.
     many_points_result = handle_many_points_intersection(
         polygons=polygons,
         first_index=first_index,
         second_index=second_index,
     )
-    if many_points_result.status == ManyPointsRebuildStatus.rebuilt:
+    if many_points_result == ManyPointsRebuildStatus.rebuilt:
         return _PairDispatchResult(outcome=_PairOutcome.rebuilt_with_restart)
 
     warnings.append(_build_rebuild_failed_warning(polygon_name))
-
-
     return _PairDispatchResult(
         outcome=_PairOutcome.excluded,
         excluded_indexes=frozenset({first_index, second_index}),
