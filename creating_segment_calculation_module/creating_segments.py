@@ -6,8 +6,7 @@ from shapely.geometry import Point
 from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 from .models.enumirations import (
-    TwoPointsRebuildStatus, ManyPointsRebuildStatus, ContainmentHandlingResult,
-    ContainmentHandlingStatus, OverlapCase
+    ContainmentHandlingResult, ContainmentHandlingStatus, OverlapCase
 )
 from .models.creating_segments import SEGMENT_TYPE_NAME_ENUM
 from .models.creating_segments import CalculationInput
@@ -179,7 +178,7 @@ def handle_two_points_intersection(
     second_index: int,
     first_intersection_point: Point,
     second_intersection_point: Point,
-) -> TwoPointsRebuildStatus:
+) -> bool:
     """Обрабатывает пару в сценарии двух граничных точек пересечения.
 
     Args:
@@ -190,7 +189,7 @@ def handle_two_points_intersection(
         second_intersection_point: Вторая точка разреза.
 
     Returns:
-        Статус перестройки пары.
+        True, если пара успешно перестроена; False — если перестроить не удалось.
     """
     return _TWO_POINTS_HANDLER.handle(
         polygons=polygons,
@@ -205,7 +204,7 @@ def handle_many_points_intersection(
     polygons: list[Polygon],
     first_index: int,
     second_index: int,
-) -> ManyPointsRebuildStatus:
+) -> bool:
     """Обрабатывает пару fallback-веткой сложного пересечения.
 
     Args:
@@ -214,7 +213,7 @@ def handle_many_points_intersection(
         second_index: Индекс второго полигона.
 
     Returns:
-        Статус перестройки пары.
+        True, если пара успешно перестроена; False — если перестроить не удалось.
     """
     return _MANY_POINTS_HANDLER.handle(
         polygons=polygons,
@@ -452,24 +451,24 @@ def process_intersections_rebuild(
                 if classification.case == OverlapCase.candidate_block_4:
                     if classification.shared_boundary_vertices is not None:
                         first_vertex, second_vertex = classification.shared_boundary_vertices
-                        two_points_status = handle_two_points_intersection(
+                        two_points_rebuilt = handle_two_points_intersection(
                             polygons=current_polygons,
                             first_index=first_polygon_index,
                             second_index=second_polygon_index,
                             first_intersection_point=first_vertex,
                             second_intersection_point=second_vertex,
                         )
-                        if two_points_status == TwoPointsRebuildStatus.rebuilt:
+                        if two_points_rebuilt:
                             # Длина списка не изменилась, можно идти к следующей паре.
                             continue
 
                 # Fallback на block 5: handler может изменить длину списка полигонов.
-                many_points_status = handle_many_points_intersection(
+                many_points_rebuilt = handle_many_points_intersection(
                     polygons=current_polygons,
                     first_index=first_polygon_index,
                     second_index=second_polygon_index,
                 )
-                if many_points_status == ManyPointsRebuildStatus.rebuilt:
+                if many_points_rebuilt:
                     # После изменения длины списка старые индексы ненадёжны, нужен полный restart сканирования.
                     should_restart_scan = True
                     break
