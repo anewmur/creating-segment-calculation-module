@@ -8,10 +8,6 @@ from ..models.enumirations import ContainmentHandlingResult, ContainmentHandling
 
 class ContainmentHandler:
     """Обрабатывает вложенность полигонов."""
-
-    def __init__(self, rebuild_outer_polygon: Callable[[Polygon, Polygon], BaseGeometry]) -> None:
-        self._rebuild_outer_polygon = rebuild_outer_polygon
-
     def handle(
         self,
         polygons: list[Polygon],

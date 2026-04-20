@@ -178,29 +178,21 @@ def extract_points(geometry) -> list[Point]:
     raw_points = _collect_points_from_geometry(geometry)
     return _deduplicate_points(raw_points)
 
-
 def _rebuild_outer_polygon_for_containment(outer_polygon: Polygon, inner_polygon: Polygon) -> BaseGeometry:
     """Строит внешний полигон с отверстием (выделено для тестирования ветки ошибок)."""
     return outer_polygon.difference(inner_polygon)
 
 
-def _build_containment_handler() -> ContainmentHandler:
-    return ContainmentHandler(rebuild_outer_polygon=_rebuild_outer_polygon_for_containment)
-
-
-def _build_two_points_handler() -> TwoPointsOverlapHandler:
-    return TwoPointsOverlapHandler(
-        point_dedup_tolerance=POINT_DEDUP_TOLERANCE,
-        shared_edge_tolerance=SHARED_EDGE_TOLERANCE,
-        boundary_touch_area_tolerance=BOUNDARY_TOUCH_AREA_TOLERANCE,
-    )
-
-
-def _build_many_points_handler() -> ManyPointsOverlapHandler:
-    return ManyPointsOverlapHandler(
-        boundary_touch_area_tolerance=BOUNDARY_TOUCH_AREA_TOLERANCE,
-        perimeter_area_threshold=PERIMETER_AREA_THRESHOLD,
-    )
+_CONTAINMENT_HANDLER = ContainmentHandler(rebuild_outer_polygon=_rebuild_outer_polygon_for_containment)
+_TWO_POINTS_HANDLER = TwoPointsOverlapHandler(
+    point_dedup_tolerance=POINT_DEDUP_TOLERANCE,
+    shared_edge_tolerance=SHARED_EDGE_TOLERANCE,
+    boundary_touch_area_tolerance=BOUNDARY_TOUCH_AREA_TOLERANCE,
+)
+_MANY_POINTS_HANDLER = ManyPointsOverlapHandler(
+    boundary_touch_area_tolerance=BOUNDARY_TOUCH_AREA_TOLERANCE,
+    perimeter_area_threshold=PERIMETER_AREA_THRESHOLD,
+)
 
 
 def handle_containment(
@@ -208,7 +200,7 @@ def handle_containment(
     first_index: int,
     second_index: int,
 ) -> ContainmentHandlingResult:
-    return _build_containment_handler().handle(
+    return _CONTAINMENT_HANDLER.handle(
         polygons=polygons,
         first_index=first_index,
         second_index=second_index,
@@ -222,7 +214,7 @@ def handle_two_points_intersection(
     first_intersection_point: Point,
     second_intersection_point: Point,
 ) -> TwoPointsRebuildStatus:
-    return _build_two_points_handler().handle(
+    return _TWO_POINTS_HANDLER.handle(
         polygons=polygons,
         first_index=first_index,
         second_index=second_index,
@@ -236,12 +228,11 @@ def handle_many_points_intersection(
     first_index: int,
     second_index: int,
 ) -> ManyPointsRebuildStatus:
-    return _build_many_points_handler().handle(
+    return _MANY_POINTS_HANDLER.handle(
         polygons=polygons,
         first_index=first_index,
         second_index=second_index,
     )
-
 
 def _pair_has_significant_area_overlap(
     first_polygon: Polygon,
@@ -363,11 +354,10 @@ def find_significant_overlaps(first_polygon: Polygon, second_polygon: Polygon) -
 
     overlap_polygons = collect_polygon_components(intersection_geometry)
 
-    epsilon = 1e-5
     significant_overlaps = []
 
     for polygon in overlap_polygons:
-        if polygon.area > epsilon:
+        if polygon.area > BOUNDARY_TOUCH_AREA_TOLERANCE:
             significant_overlaps.append(polygon)
 
     return significant_overlaps
