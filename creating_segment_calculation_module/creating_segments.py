@@ -139,7 +139,7 @@ def _rebuild_outer_polygon_for_containment(outer_polygon: Polygon, inner_polygon
     return outer_polygon.difference(inner_polygon)
 
 
-_CONTAINMENT_HANDLER = ContainmentHandler(rebuild_outer_polygon=_rebuild_outer_polygon_for_containment)
+_CONTAINMENT_HANDLER = ContainmentHandler()
 _TWO_POINTS_HANDLER = TwoPointsOverlapHandler(
     point_dedup_tolerance=POINT_DEDUP_TOLERANCE,
     shared_edge_tolerance=SHARED_EDGE_TOLERANCE,

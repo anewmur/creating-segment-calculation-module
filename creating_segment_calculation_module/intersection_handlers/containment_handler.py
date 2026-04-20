@@ -1,16 +1,10 @@
-from collections.abc import Callable
-
 from shapely.geometry import Polygon
-from shapely.geometry.base import BaseGeometry
 
 from ..models.enumirations import ContainmentHandlingResult, ContainmentHandlingStatus
 
 
 class ContainmentHandler:
     """Обрабатывает вложенность полигонов."""
-
-    def __init__(self, rebuild_outer_polygon: Callable[[Polygon, Polygon], BaseGeometry]) -> None:
-        self._rebuild_outer_polygon = rebuild_outer_polygon
 
     def handle(
         self,
@@ -31,9 +25,14 @@ class ContainmentHandler:
         else:
             return ContainmentHandlingResult(status=ContainmentHandlingStatus.not_containment)
 
+        # Импорт внутри метода — поздний binding, чтобы monkeypatch
+        # `creating_segments._rebuild_outer_polygon_for_containment`
+        # работал в тестах.
+        from ..creating_segments import _rebuild_outer_polygon_for_containment
+
         outer_polygon = polygons[outer_index]
         inner_polygon = polygons[inner_index]
-        rebuilt_outer = self._rebuild_outer_polygon(outer_polygon, inner_polygon)
+        rebuilt_outer = _rebuild_outer_polygon_for_containment(outer_polygon, inner_polygon)
 
         if (
             rebuilt_outer.is_empty

@@ -1,6 +1,9 @@
 from enum import Enum
 from dataclasses import dataclass
 
+
+
+
 class OverlapCase(Enum):
     no_overlap = "no_overlap"
     all_points_inside_one_polygon = "all_points_inside_one_polygon"
@@ -36,3 +39,5 @@ class ManyPointsRebuildStatus(Enum):
 
     rebuilt = 'rebuilt'
     rebuild_failed = 'rebuild_failed'
+
+

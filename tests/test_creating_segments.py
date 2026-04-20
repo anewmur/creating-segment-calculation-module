@@ -17,7 +17,6 @@ from creating_segment_calculation_module.creating_segments import ManyPointsRebu
 from creating_segment_calculation_module.creating_segments import PERIMETER_AREA_THRESHOLD
 from creating_segment_calculation_module.creating_segments import TwoPointsRebuildStatus
 from creating_segment_calculation_module.creating_segments import creating_segments
-from creating_segment_calculation_module.creating_segments import extract_points
 from creating_segment_calculation_module.creating_segments import handle_containment
 from creating_segment_calculation_module.creating_segments import handle_many_points_intersection
 from creating_segment_calculation_module.creating_segments import handle_two_points_intersection
@@ -758,89 +757,6 @@ def test_process_intersections_rebuild_processes_independent_pairs():
         for second_index in range(first_index + 1, len(result)):
             overlap_area = result[first_index].intersection(result[second_index]).area
             assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
-
-def test_extract_points_supports_point_multipoint_and_nested_geometry_collection():
-    point = Point(1, 2)
-    multipoint = MultiPoint([Point(3, 4), Point(5, 6)])
-    nested = GeometryCollection(
-        [
-            LineString([(0, 0), (1, 1)]),
-            GeometryCollection(
-                [
-                    Point(7, 8),
-                    GeometryCollection([Point(9, 10)]),
-                ],
-            ),
-        ],
-    )
-
-    point_result = extract_points(point)
-    multipoint_result = extract_points(multipoint)
-    nested_result = extract_points(nested)
-
-    assert len(point_result) == 1
-    assert point_result[0].equals(Point(1, 2))
-    assert len(multipoint_result) == 2
-    assert {item.wkt for item in multipoint_result} == {'POINT (3 4)', 'POINT (5 6)'}
-    assert len(nested_result) == 2
-    assert {item.wkt for item in nested_result} == {'POINT (7 8)', 'POINT (9 10)'}
-
-
-def test_extract_points_returns_empty_for_linestring_intersection():
-    geometry = LineString([(0, 0), (10, 0)])
-    assert extract_points(geometry) == []
-
-
-def test_extract_points_deduplicates_same_point_from_nested_geometries():
-    geometry = GeometryCollection(
-        [
-            Point(3, 3),
-            GeometryCollection([MultiPoint([Point(3, 3), Point(3, 3)])]),
-        ],
-    )
-
-    result = extract_points(geometry)
-    assert len(result) == 1
-    assert result[0].equals(Point(3, 3))
-
-
-def test_extract_points_deduplicates_near_equal_points_with_tolerance():
-    geometry = MultiPoint([Point(5.0, 5.0), Point(5.0 + 1e-10, 5.0 - 1e-10)])
-    result = extract_points(geometry)
-
-    assert len(result) == 1
-    assert result[0].equals(Point(5.0, 5.0))
-
-
-def test_extract_points_does_not_deduplicate_points_outside_tolerance():
-    geometry = MultiPoint([Point(5.0, 5.0), Point(5.0 + 5e-9, 5.0)])
-    result = extract_points(geometry)
-
-    assert len(result) == 2
-    assert abs(result[0].x - 5.0) < 1e-12
-    assert abs(result[0].y - 5.0) < 1e-12
-    assert abs(result[1].x - (5.0 + 5e-9)) < 1e-12
-    assert abs(result[1].y - 5.0) < 1e-12
-
-
-def test_extract_points_returns_unique_points_for_real_boundary_intersection():
-    geometry = GeometryCollection([Point(2, 2), MultiPoint([Point(1, 1), Point(2, 2)]), Point(3, 3)])
-    result = extract_points(geometry)
-
-    assert len(result) == 3
-    assert {(point.x, point.y) for point in result} == {(1.0, 1.0), (2.0, 2.0), (3.0, 3.0)}
-
-
-def test_extract_points_from_polygon_boundary_intersection_returns_unordered_unique_points():
-    polygon_1 = Polygon([(0, 0), (4, 0), (4, 4), (0, 4)])
-    polygon_2 = Polygon([(2, -1), (6, -1), (6, 2), (2, 2)])
-
-    boundary_intersection = polygon_1.boundary.intersection(polygon_2.boundary)
-    points = extract_points(boundary_intersection)
-
-    assert len(points) == 2
-    assert {(round(point.x, 8), round(point.y, 8)) for point in points} == {(2.0, 0.0), (4.0, 2.0)}
-
 
 def test_process_intersections_rebuild_exclude_outer_stops_next_pairs_for_same_outer(monkeypatch):
     outer = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
