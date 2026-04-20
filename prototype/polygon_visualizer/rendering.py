@@ -73,9 +73,8 @@ def render_svg_layers(layers, bounds, labels_out: list[str]) -> str:
                 vertex_color = style.vertex_color or style.stroke
                 for coord_x, coord_y in poly.exterior.coords:
                     parts.append(
-                        f'  <circle cx="{coord_x}" cy="{coord_y}" r="{vertex_radius}" '
-                        f'fill="{vertex_color}" class="vertex"'
-                        f' data-base-r="{vertex_radius}">'
+                        f'  <circle cx="{coord_x}" cy="{coord_y}" r="0" '
+                        f'fill="{vertex_color}" class="vertex">'
                         f"<title>({coord_x:.2f}, {coord_y:.2f})</title></circle>"
                     )
 

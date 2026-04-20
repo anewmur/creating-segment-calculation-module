@@ -52,6 +52,7 @@ def load_polygons_from_result(result) -> list[ShapelyPolygon]:
 
 def main(file, merge_radius) -> None:
     base_dir = Path(__file__).resolve().parents[1] / "data"
+    output_dir = Path(__file__).resolve().parents[1] / "output"
 
     # Проверяем что всё на месте
     if not base_dir.exists():
@@ -63,7 +64,7 @@ def main(file, merge_radius) -> None:
         print(f"ОШИБКА: файл '{polygon_path.resolve()}' не найден")
         sys.exit(1)
 
-    storage = Storage(base_dir=base_dir)
+    storage = Storage(base_dir=output_dir)
 
     payload = {
         "parameter": {
@@ -102,9 +103,9 @@ def main(file, merge_radius) -> None:
     viz.set_title("Полигоны")
     viz.draw_before_after(before, after, draw_vertices=True)
 
-    output_path = base_dir / "result.html"
+    output_path = output_dir / "result.html"
 
-    viz.show(base_dir / "result.html")
+    viz.show(output_path)
 
     print(f"Визуализация: {output_path.resolve()}")
 
@@ -116,9 +117,13 @@ def main(file, merge_radius) -> None:
 
 if __name__ == "__main__":
     # file = "polygon2.json"
-    # file = "test_polygon_2.json"
-
+    # file = "polygon2_a.json"
+    # file = "polygon2_b.json"
+    # file = "polygon2_c.json"
+    file = "polygon2_d.json"
     # file = "test_nested_polygon.json"
-    file = "test_itersection_polygon_with_2_dots_2.json"
-    merge_radius=1
+    # file = "test_intersection_poligon_many_points_1.json"
+    # file = "test_intersection_poligon_many_points_2.json"
+
+    merge_radius=15
     main(file=file, merge_radius=merge_radius)

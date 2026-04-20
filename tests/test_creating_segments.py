@@ -260,17 +260,22 @@ def test_process_intersections_rebuild_containment_case():
     assert abs(preserved_inner.area - inner.area) < 1e-9
     assert rebuilt_outer.intersection(preserved_inner).area < 1e-9
 
-
-def test_process_intersections_rebuild_excludes_unsupported_overlap():
+def test_process_intersections_rebuild_rebuilds_overlap_via_many_points_branch():
+    """Площадной оверлап с общим отрезком границы перестраивается блоком 5."""
     polygon_1 = Polygon([(0, 0), (0, 500), (500, 500), (500, 0), (0, 0)])
     polygon_2 = Polygon([(250, 0), (250, 500), (750, 500), (750, 0), (250, 0)])
 
     result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'Полигон')
 
-    assert result == []
-    assert len(warnings) == 1
-    assert 'до реализации блоков 4 и 5' in warnings[0]
-
+    assert warnings == []
+    assert len(result) == 2
+    for first_index in range(len(result)):
+        for second_index in range(first_index + 1, len(result)):
+            overlap_area = result[first_index].intersection(result[second_index]).area
+            assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+    original_union_area = polygon_1.union(polygon_2).area
+    rebuilt_area = sum(polygon.area for polygon in result)
+    assert abs(rebuilt_area - original_union_area) <= 1e-6 * original_union_area
 
 def test_two_points_branch_zero_overlap_after_rebuild():
     square_a = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
@@ -372,16 +377,23 @@ def test_handle_two_points_intersection_returns_rebuilt_and_mutates_list():
     assert polygons[0].intersection(polygons[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
 
 
-def test_two_points_branch_is_not_used_when_boundaries_share_segment():
+def test_two_points_branch_is_not_used_when_boundaries_share_segment(monkeypatch):
     polygon_1 = Polygon([(0, 0), (0, 500), (500, 500), (500, 0), (0, 0)])
     polygon_2 = Polygon([(250, 0), (250, 500), (750, 500), (750, 0), (250, 0)])
 
+    def fake_handle_two_points_intersection(polygons, first_index, second_index,
+                                             first_intersection_point, second_intersection_point):
+        raise AssertionError('two points branch should not be called when shared segment exists')
+
+    monkeypatch.setattr(
+        'creating_segment_calculation_module.creating_segments.handle_two_points_intersection',
+        fake_handle_two_points_intersection,
+    )
+
     result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
 
-    assert result == []
-    assert len(warnings) == 1
-    assert 'неподдерживаемым способом' in warnings[0]
-
+    assert warnings == []
+    assert len(result) == 2
 
 def test_two_points_entry_guard_uses_shared_segment_check(monkeypatch):
     polygon_1 = Polygon([(0, 0), (0, 8), (8, 8), (8, 0), (0, 0)])
@@ -408,9 +420,9 @@ def test_two_points_entry_guard_uses_shared_segment_check(monkeypatch):
 
     result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
 
-    assert result == []
-    assert len(warnings) == 1
-    assert 'неподдерживаемым способом' in warnings[0]
+    # Тест проверяет только то, что блок 4 не вызывался (guard через AssertionError в моке).
+    # Отсутствие warnings подтверждает, что управление ушло в блок 5 и пара обработана.
+    assert warnings == []
 
 def test_two_points_branch_excludes_both_polygons_when_rebuild_failed(monkeypatch):
     polygon_1 = Polygon([(0, 0), (0, 10), (10, 10), (10, 0), (0, 0)])
@@ -419,10 +431,17 @@ def test_two_points_branch_excludes_both_polygons_when_rebuild_failed(monkeypatc
     class FakeTwoPointsResult:
         status = TwoPointsRebuildStatus.rebuild_failed
 
+    class FakeManyPointsResult:
+        status = ManyPointsRebuildStatus.rebuild_failed
+
     monkeypatch.setattr(
         'creating_segment_calculation_module.creating_segments.handle_two_points_intersection',
         lambda polygons, first_index, second_index, first_intersection_point,
                second_intersection_point: FakeTwoPointsResult(),
+    )
+    monkeypatch.setattr(
+        'creating_segment_calculation_module.creating_segments.handle_many_points_intersection',
+        lambda polygons, first_index, second_index: FakeManyPointsResult(),
     )
 
     result, warnings = process_intersections_rebuild([polygon_1, polygon_2], 'test')
@@ -430,11 +449,9 @@ def test_two_points_branch_excludes_both_polygons_when_rebuild_failed(monkeypatc
     assert result == []
     assert warnings == [
         'Расчёт сегментов\n'
-        'Полилинии полигона test с пересечением в 2 точках '
+        'Полилинии полигона test со сложным пересечением '
         'не удалось перестроить, обе полилинии исключены из расчёта.',
     ]
-
-
 def test_two_points_branch_keeps_boundary_polygon_and_rebuilds_other():
     polygon_left = Polygon([(0, 0), (0, 10), (8, 10), (8, 0), (0, 0)])
     polygon_right = Polygon([(6, -2), (6, 14), (16, 14), (16, -2), (6, -2)])
@@ -450,6 +467,29 @@ def test_two_points_branch_keeps_boundary_polygon_and_rebuilds_other():
     assert result[0].symmetric_difference(expected_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
     assert result[1].symmetric_difference(polygon_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
     assert result[0].intersection(result[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+
+def test_many_points_branch_handles_geometry_collection_intersection():
+    """Пересечение с GeometryCollection (площадь + общий отрезок границы)
+    должно перестраиваться без warning'а, оставляя обе части."""
+    polygon_a = Polygon([(0, 0), (20, 0), (20, 20), (0, 20), (0, 0)])
+    polygon_b = Polygon(
+        [(10, 0), (30, 0), (30, 25), (0, 25), (0, 20), (10, 20), (10, 0)],
+    )
+
+    # Убедимся, что это действительно GeometryCollection (предусловие теста).
+    raw_intersection = polygon_a.intersection(polygon_b)
+    assert raw_intersection.geom_type == 'GeometryCollection', (
+        f'Тестовые данные не дают GeometryCollection: {raw_intersection.geom_type}'
+    )
+
+    result, warnings = process_intersections_rebuild([polygon_a, polygon_b], 'test')
+
+    assert warnings == []
+    assert len(result) == 2
+    original_union_area = polygon_a.union(polygon_b).area
+    rebuilt_area = sum(polygon.area for polygon in result)
+    assert abs(rebuilt_area - original_union_area) <= 1e-6 * original_union_area
 
 
 def test_handle_two_points_intersection_keeps_fixed_boundary_polygon_and_rebuilds_other():
@@ -561,36 +601,24 @@ def test_many_points_branch_zero_overlap_after_rebuild():
             assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
 
 
-def test_many_points_branch_preserves_all_valid_fragments():
-    polygon_a = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
-    polygon_b = Polygon(
+def test_many_points_perimeter_area_filter_applied():
+    base = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    thin_comb = Polygon(
         [
-            (20, -10), (40, -10), (40, 30), (60, 30), (60, -10), (80, -10),
-            (80, 110), (60, 110), (60, 70), (40, 70), (40, 110), (20, 110),
+            (20, -10), (21, -10), (21, 30), (40, 30), (40, -10), (41, -10),
+            (41, 110), (40, 110), (40, 70), (21, 70), (21, 110), (20, 110),
         ],
     )
 
-    result, warnings = process_intersections_rebuild([polygon_a, polygon_b], 'test')
+    result, warnings = process_intersections_rebuild([base, thin_comb], 'test')
 
     assert warnings == []
-    # Для этой пары keeper — polygon_a, а loser (polygon_b) после difference
-    # должен распасться на два валидных фрагмента (сверху и снизу).
-    # Итого ожидаем ровно 3 полигона: 1 keeper + 2 loser fragments.
-    assert len(result) == 3
-    keeper = next(polygon for polygon in result if abs(polygon.area - polygon_a.area) < 1e-6 * polygon_a.area)
-    loser_fragments = [polygon for polygon in result if polygon is not keeper]
+    assert len(result) == 1
+    assert result[0].symmetric_difference(base).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
 
-    assert len(loser_fragments) == 2
-    for fragment in loser_fragments:
-        assert fragment.is_valid
-        assert not fragment.is_empty
-        assert fragment.area > BOUNDARY_TOUCH_AREA_TOLERANCE
-
-    expected_loser_geometry = polygon_b.difference(polygon_a)
-    rebuilt_loser_geometry = unary_union(loser_fragments)
-    symmetric_diff_area = rebuilt_loser_geometry.symmetric_difference(expected_loser_geometry).area
-    assert symmetric_diff_area <= 1e-6 * expected_loser_geometry.area
-
+    for polygon in result:
+        assert polygon.area > 0
+        assert polygon.length / polygon.area <= PERIMETER_AREA_THRESHOLD
 
 def test_many_points_more_than_four_goes_same_branch():
     polygon_a = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
@@ -608,17 +636,6 @@ def test_many_points_more_than_four_goes_same_branch():
     assert warnings == []
     assert len(result) >= 1
 
-
-def test_many_points_perimeter_area_filter_applied():
-    thin = Polygon([(0, 0), (1000, 0), (1000, 2), (0, 2)])
-    big = Polygon([(-10, -10), (999, -10), (999, 10), (-10, 10)])
-
-    result, warnings = process_intersections_rebuild([thin, big], 'test')
-
-    assert warnings == []
-    for polygon in result:
-        assert polygon.area > 0
-        assert polygon.length / polygon.area <= PERIMETER_AREA_THRESHOLD
 
 
 def test_many_points_branch_assigns_overlap_to_lower_damage_polygon():
@@ -707,10 +724,16 @@ def test_restart_scan_keeps_previously_excluded_indexes(monkeypatch):
 
     assert len(warnings) == 1
     assert 'ошибки обработки вложенности' in warnings[0]
-    # Ожидаем: inner остаётся + пара (base, zigzag) перестраивается в 3 полигона.
-    assert len(result) == 4
-    assert any(polygon.symmetric_difference(inner).area <= BOUNDARY_TOUCH_AREA_TOLERANCE for polygon in result)
-    assert not any(polygon.symmetric_difference(outer).area <= BOUNDARY_TOUCH_AREA_TOLERANCE for polygon in result)
+    assert len(result) == 6
+
+    assert any(
+        polygon.symmetric_difference(inner).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+        for polygon in result
+    )
+    assert not any(
+        polygon.symmetric_difference(outer).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+        for polygon in result
+    )
 
     for first_index in range(len(result)):
         for second_index in range(first_index + 1, len(result)):
@@ -718,7 +741,7 @@ def test_restart_scan_keeps_previously_excluded_indexes(monkeypatch):
             assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
 
 
-def test_process_intersections_rebuild_continues_after_first_failed_pair():
+def test_process_intersections_rebuild_processes_independent_pairs():
     pair_one_first = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
     pair_one_second = Polygon([(5, 0), (15, 0), (15, 10), (5, 10)])
     pair_two_first = Polygon([(100, 0), (110, 0), (110, 10), (100, 10)])
@@ -729,10 +752,12 @@ def test_process_intersections_rebuild_continues_after_first_failed_pair():
         'test',
     )
 
-    assert result == []
-    assert len(warnings) == 2
-    assert all('неподдерживаемым способом' in warning for warning in warnings)
-
+    assert warnings == []
+    assert len(result) == 2
+    for first_index in range(len(result)):
+        for second_index in range(first_index + 1, len(result)):
+            overlap_area = result[first_index].intersection(result[second_index]).area
+            assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
 
 def test_extract_points_supports_point_multipoint_and_nested_geometry_collection():
     point = Point(1, 2)
@@ -981,8 +1006,7 @@ def test_creating_segments_process_intersections_zero_excludes_in_pipeline():
             "Расчёт сегментов\nВсе полилинии полигона 'Полигон' исключены из-за пересечений. Расчёт не выполнен.",
         ]
 
-
-def test_creating_segments_process_intersections_one_excludes_unsupported_overlap_in_pipeline():
+def test_creating_segments_process_intersections_one_rebuilds_overlap_in_pipeline():
     polygon_payload = {
         'lines': [
             {
@@ -1025,10 +1049,9 @@ def test_creating_segments_process_intersections_one_excludes_unsupported_overla
         input_data = CalculationInput.model_validate(raw_input)
         result = creating_segments(input_data, storage)
 
-        assert result.formation is None
-        assert result.error == [
-            "Расчёт сегментов\nВсе полилинии полигона 'Полигон' исключены из-за пересечений. Расчёт не выполнен.",
-        ]
+        assert result.error == []
+        assert result.formation is not None
+        assert len(result.formation.segment) == 2
 
 
 def test_creating_segments_process_intersections_one_keeps_independent_polygon_with_containment():
@@ -1303,3 +1326,37 @@ def test_two_points_branch_handles_numerically_computed_intersection_point():
     assert result[0].symmetric_difference(expected_left).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
     assert result[1].symmetric_difference(polygon_right).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
     assert result[0].intersection(result[1]).area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+def test_many_points_branch_keeps_three_segments_for_vertical_strip_case():
+    square = Polygon([(0, 0), (0, 100), (100, 100), (100, 0)])
+    vertical_strip = Polygon([(35, -40), (35, 140), (65, 140), (65, -40)])
+
+    result, warnings = process_intersections_rebuild([square, vertical_strip], 'test')
+
+    assert warnings == []
+    assert len(result) == 3
+
+    keeper = next(
+        polygon
+        for polygon in result
+        if abs(polygon.area - square.area) <= 1e-6 * square.area
+    )
+    loser_fragments = [polygon for polygon in result if polygon is not keeper]
+
+    assert len(loser_fragments) == 2
+
+    for fragment in loser_fragments:
+        assert fragment.is_valid
+        assert not fragment.is_empty
+        assert fragment.area > BOUNDARY_TOUCH_AREA_TOLERANCE
+        assert fragment.length / fragment.area <= PERIMETER_AREA_THRESHOLD
+
+    expected_loser_geometry = vertical_strip.difference(square)
+    rebuilt_loser_geometry = unary_union(loser_fragments)
+    symmetric_diff_area = rebuilt_loser_geometry.symmetric_difference(expected_loser_geometry).area
+    assert symmetric_diff_area <= 1e-6 * expected_loser_geometry.area
+
+    for first_index in range(len(result)):
+        for second_index in range(first_index + 1, len(result)):
+            overlap_area = result[first_index].intersection(result[second_index]).area
+            assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE

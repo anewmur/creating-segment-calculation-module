@@ -14,7 +14,7 @@ class PolygonStyle:
     stroke_width: float = 1.5
     fill: str = "none"
     fill_opacity: float = 0.2
-    vertex_radius: float = 6.0
+    vertex_radius: float = 4.0
     vertex_color: str | None = None
     label: str | None = None
 
@@ -60,7 +60,7 @@ class PolygonVisualizerSVG:
             stroke_width=1.0,
             fill="#9ca3af",
             fill_opacity=0.16,
-            vertex_radius=-1 if draw_vertices else 0,
+            vertex_radius=0.75 if draw_vertices else 0,
             vertex_color="#6b7280",
             label=None,
         )
@@ -69,7 +69,7 @@ class PolygonVisualizerSVG:
             stroke_width=1.8,
             fill="#2563eb",
             fill_opacity=0.20,
-            vertex_radius=-1 if draw_vertices else 0,
+            vertex_radius=0.75 if draw_vertices else 0,
             vertex_color="#1d4ed8",
             label=None,
         )

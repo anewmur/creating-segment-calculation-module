@@ -10,6 +10,12 @@
   const flipOffset = window.__VIZ_DATA__.flipOffset;
   const mergeRadius = window.__VIZ_DATA__.mergeRadius;
 
+  // Пиксельный размер вертекса фиксируется один раз от начального окна
+  // и дальше не зависит от ресайза. Зум сохраняет этот размер постоянным
+  // через пересчёт мирового радиуса через unitPerPixelY в updateLabelScale.
+  const VERTEX_SIZE_RATIO = 0.005;
+  const vertexPixelSize = Math.min(window.innerWidth, window.innerHeight) * VERTEX_SIZE_RATIO;
+
   let hoverCircle = null;
 
   document.getElementById('world')
@@ -38,10 +44,10 @@
     });
 
     const vertices = document.querySelectorAll('.vertex');
+    const viewport = getVisibleViewportMetrics();
+    const vertexWorldRadius = vertexPixelSize * viewport.unitPerPixelY;
     vertices.forEach(vertex => {
-      const baseRadius = Number(vertex.dataset.baseR || 3);
-      const radius = zoom >= 1 ? baseRadius / zoom : baseRadius;
-      vertex.setAttribute('r', String(radius));
+      vertex.setAttribute('r', String(vertexWorldRadius));
     });
   }
 
@@ -195,7 +201,7 @@
       // (левая граница viewBox), диапазон по Y уже покрывает весь viewBox через overscan.
       if (gridYLine.svgY >= vb.y && gridYLine.svgY <= vb.y + vb.h) {
         const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        label.setAttribute('x', String(viewport.left - 430 * viewport.unitPerPixelX));
+        label.setAttribute('x', String(viewport.left - 330 * viewport.unitPerPixelX));
         label.setAttribute('y', String(gridYLine.svgY));
         label.setAttribute('font-size', String(gridLabelFontSize));
         label.setAttribute('fill', '#000');
