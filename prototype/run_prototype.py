@@ -121,9 +121,7 @@ if __name__ == "__main__":
     # file = "polygon2_b.json"
     # file = "polygon2_c.json"
     # file = "polygon2_d.json"
-    # file = "test_nested_polygon.json"
-    # file = "test_intersection_poligon_many_points_1.json"
-    # file = "test_intersection_poligon_many_points_2.json"
+    # file = "poly_two_test.json"
 
     merge_radius=15
     main(file=file, merge_radius=merge_radius)
