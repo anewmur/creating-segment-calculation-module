@@ -20,7 +20,11 @@ from creating_segment_calculation_module.creating_segments import handle_many_po
 from creating_segment_calculation_module.creating_segments import handle_two_points_intersection
 from creating_segment_calculation_module.creating_segments import polygon_to_polygon_line
 from creating_segment_calculation_module.creating_segments import process_intersections_rebuild
+from creating_segment_calculation_module.creating_segments import remove_duplicate_lines_by_edges
 from creating_segment_calculation_module.models.creating_segments import CalculationInput
+from creating_segment_calculation_module.models.creating_segments import Line
+from creating_segment_calculation_module.models.creating_segments import PolygonLine
+from creating_segment_calculation_module.models.creating_segments import TargetPoint
 
 from tests.utils import Storage
 
@@ -78,6 +82,69 @@ def test_creating_segments_with_border():
                 },
             ],
         }
+
+
+def test_creating_segments_removes_duplicate_closed_lines_by_edges():
+    with TemporaryDirectory(prefix='test_creating_segment') as base_dir:
+        polygon = """{"lines":[
+        {"points":[{"x":0,"y":0},{"x":0,"y":10},{"x":10,"y":10},{"x":10,"y":0},{"x":0,"y":0}]},
+        {"points":[{"x":10,"y":10},{"x":10,"y":0},{"x":0,"y":0},{"x":0,"y":10},{"x":10,"y":10}]},
+        {"points":[{"x":0,"y":0},{"x":10,"y":0},{"x":10,"y":10},{"x":0,"y":10},{"x":0,"y":0}]}
+        ]}"""
+        base_dir = Path(base_dir)
+        polygon_path = base_dir / 'polygon'
+        polygon_path.write_text(polygon, encoding='utf-8')
+
+        storage = Storage(base_dir=base_dir)
+        input_data = {
+            'parameter': {'name_by': 'Имени полигона', 'segments_group': '1', 'segments_type': '2'},
+            'polygon': {'id': '12', 'name': 'Полигон', 'value': {'file': {'path': str(polygon_path)}}},
+            'formation': {'name': 'пласт'},
+        }
+
+        calculation_input = CalculationInput.model_validate(input_data)
+
+        result = creating_segments(calculation_input, storage)
+        with open(result.formation.segment[0].value.file.path, 'rb') as file:
+            data = json.load(file)
+
+        assert result.error == []
+        assert result.info == ['Расчёт сегментов\nУспешно создано сегментов: 1']
+        assert result.warning == [
+            'Расчёт сегментов\n'
+            'Полигон Полигон содержит повторяющиеся замкнутые полилинии: '
+            'удалено 2 шт. (индексы: 2, 3).',
+        ]
+        assert data == {
+            'lines': [
+                {
+                    'points': [
+                        {'x': 0.0, 'y': 0.0},
+                        {'x': 0.0, 'y': 10.0},
+                        {'x': 10.0, 'y': 10.0},
+                        {'x': 10.0, 'y': 0.0},
+                        {'x': 0.0, 'y': 0.0},
+                    ],
+                },
+            ],
+        }
+
+
+def test_remove_duplicate_lines_by_edges_keeps_short_lines_for_validation():
+    polygon_line = PolygonLine(
+        lines=[
+            Line(points=[TargetPoint(x=0, y=0)]),
+            Line(points=[TargetPoint(x=0, y=0)]),
+        ],
+    )
+
+    deduplicated_polygon_line, warning_messages = remove_duplicate_lines_by_edges(
+        polygon_line,
+        polygon_name='Полигон',
+    )
+
+    assert warning_messages == []
+    assert len(deduplicated_polygon_line.lines) == 2
 
 def test_check_intersections_excludes_overlapping_polygons():
     polygon_1 = Polygon([(0, 0), (0, 500), (500, 500), (500, 0), (0, 0)])
