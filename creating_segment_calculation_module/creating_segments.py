@@ -8,7 +8,7 @@ from shapely.geometry.base import BaseGeometry
 from .models.enumirations import (
     ContainmentHandlingResult, ContainmentHandlingStatus, OverlapCase
 )
-from .models.creating_segments import SEGMENT_TYPE_NAME_ENUM
+
 from .models.creating_segments import CalculationInput
 from .models.creating_segments import CalculationResult
 from .models.creating_segments import FormationResult
@@ -797,43 +797,41 @@ def polygon_to_polygon_line(polygon: Polygon) -> PolygonLine:
     return PolygonLine(lines=lines)
 
 
-def assign_segment_names(polygons: list[Polygon], input_data: CalculationInput, storage) -> list[Segment]:
-    """Назначает имена сегментам и формирует результат"""
-    segments = []
-    name_counter: dict[str, int] = {}
+def save_polygons_as_single_segment(
+    polygons: list[Polygon],
+    input_data: CalculationInput,
+    storage,
+) -> list[Segment]:
+    """Сохраняет все полигоны в один json-файл формата входных данных."""
+    all_lines: list[dict] = []
 
-    for index, polygon in enumerate(polygons):
-        # Формирование имени в зависимости от типа
-        if input_data.parameter.name_by == SEGMENT_TYPE_NAME_ENUM.polygon_name:
-            base_name = input_data.polygon.name
-            name = f'{base_name} ({index + 1})' if index > 0 else base_name
-        else:
-            # Поиск скважин, принадлежащих полигону
-            well_names = get_well_in_segment(input_data, polygon)
-            name = generate_combined_name(well_names, name_counter)
+    for polygon in polygons:
+        polygon_line = polygon_to_polygon_line(polygon)
+        polygon_data = polygon_line.model_dump()
+        polygon_lines = polygon_data["lines"]
+        all_lines.extend(polygon_lines)
 
-        # Сохранение полигона в файл
-        polygon_data = polygon_to_polygon_line(polygon).model_dump()
-        content = json.dumps(polygon_data, ensure_ascii=False, indent=2)
+    content = json.dumps({"lines": all_lines}, ensure_ascii=False, indent=2)
 
-        # Создаем имя файла без запрещенных символов
-        safe_name = ''.join(c for c in name if c.isalnum() or c in ' _-')
-        file_path = storage.get_temp_dir() / f'{safe_name}_{input_data.parameter.segments_type}.json'
+    base_name = input_data.polygon.name
+    safe_name = "".join(char for char in base_name if char.isalnum() or char in " _-")
+    if not safe_name:
+        safe_name = "segments"
 
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(content)
+    file_path = storage.get_temp_dir() / f"{safe_name}_{input_data.parameter.segments_type}.json"
 
-        segments.append(
-            Segment(
-                group=input_data.parameter.segments_group,
-                type=input_data.parameter.segments_type,
-                name=name,
-                value=PolygonValue(file=File(path=str(file_path))),
-                polygon_id=input_data.polygon.id,
-            ),
-        )
+    with open(file_path, "w", encoding="utf-8") as file:
+        file.write(content)
 
-    return segments
+    segment = Segment(
+        group=input_data.parameter.segments_group,
+        type=input_data.parameter.segments_type,
+        name=base_name,
+        value=PolygonValue(file=File(path=str(file_path))),
+        polygon_id=input_data.polygon.id,
+    )
+    return [segment]
+
 
 
 def generate_combined_name(well_names: list[str], name_counter: dict[str, int]):
@@ -892,7 +890,6 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
     error_msgs: list[str] = []
 
     try:
-        # Загрузка основного полигона
         with open(input_data.polygon.value.file.path, encoding='utf-8') as f:
             polygon_data = json.load(f)
         polygon_line = PolygonLine.model_validate(polygon_data)
@@ -902,11 +899,9 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
         )
         warning_msgs.extend(duplicate_lines_warnings)
 
-        # Валидация и обработка линий
         polygons, warnings = validate_and_process_lines(polygon_line, input_data.polygon.name)
         warning_msgs.extend(warnings)
 
-        # Проверка наличия валидных полигонов
         if not polygons:
             error_msgs.append(
                 f"{CALCULATION_NAME}"
@@ -914,7 +909,6 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
             )
             return CalculationResult(formation=None, info=info_msgs, warning=warning_msgs, error=error_msgs)
 
-        # Загрузка контура модели (если есть)
         model_border = None
         if input_data.formation_model and input_data.formation_model.border_model:
             try:
@@ -923,14 +917,14 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
                 border_line = PolygonLine.model_validate(border_data)
 
                 if border_line.lines:
-                    border_points = [(p.x, p.y) for p in border_line.lines[0].points]
+                    border_points = [(point.x, point.y) for point in border_line.lines[0].points]
                     model_border = Polygon(border_points)
 
             except ValueError:
                 error_msgs.append(
                     f'{CALCULATION_NAME}Неизвестный формат контура модели. Контур модели не будет использован.',
                 )
-        # Обрезка по контуру модели
+
         polygons, clip_warnings = clip_to_model_border(polygons, model_border, input_data.polygon.name)
         warning_msgs.extend(clip_warnings)
 
@@ -950,7 +944,6 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
             warning_msgs.extend(merge_warnings)
             info_msgs.extend(merge_infos)
 
-
         if not polygons:
             error_msgs.append(
                 f"{CALCULATION_NAME}"
@@ -958,7 +951,6 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
             )
             return CalculationResult(formation=None, info=info_msgs, warning=warning_msgs, error=error_msgs)
 
-        # Проверка/обработка пересечений
         if input_data.parameter.process_intersections == 0:
             polygons, intersection_warnings = check_intersections(polygons, input_data.polygon.name)
         else:
@@ -972,9 +964,8 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
             )
             return CalculationResult(formation=None, info=info_msgs, warning=warning_msgs, error=error_msgs)
 
-        # Формирование сегментов
-        segments = assign_segment_names(polygons, input_data, storage)
-        info_msgs.append(f'{CALCULATION_NAME}Успешно создано сегментов: {len(segments)}')
+        segments = save_polygons_as_single_segment(polygons, input_data, storage)
+        info_msgs.append(f'{CALCULATION_NAME}Успешно создано сегментов: {len(polygons)}')
 
         return CalculationResult(
             formation=FormationResult(segment=segments, name=input_data.formation.name),

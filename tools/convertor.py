@@ -75,8 +75,8 @@ def convert_txt_polygon_to_json(txt_path: str | Path, json_path: str | Path) -> 
 
 
 def main() -> None:
-    txt_path = Path('..\data\polygon2.txt')
-    json_path = Path('..\data\polygon2.json')
+    txt_path = Path('..\data\polygon3.txt')
+    json_path = Path('..\data\polygon3.json')
     convert_txt_polygon_to_json(txt_path, json_path)
     print(f'Готово: {json_path}')
 

@@ -144,7 +144,7 @@ def test_remove_duplicate_lines_by_edges_keeps_short_lines_for_validation():
     )
 
     assert warning_messages == []
-    assert len(deduplicated_polygon_line.lines) == 2
+    assert deduplicated_polygon_line.lines == polygon_line.lines
 
 def test_check_intersections_excludes_overlapping_polygons():
     polygon_1 = Polygon([(0, 0), (0, 500), (500, 500), (500, 0), (0, 0)])
@@ -195,7 +195,7 @@ def test_creating_segments_with_well():
 
         result = creating_segments(input_data, storage)
         assert result.info == ['Расчёт сегментов\nУспешно создано сегментов: 1']
-        assert result.formation.segment[0].name == 'well1'
+        assert result.formation.segment[0].name == 'Полигон'
 
 
 def test_parameter_defaults():
@@ -874,25 +874,14 @@ def test_creating_segments_containment_result_saved_with_hole():
         input_data = CalculationInput.model_validate(raw_input)
         result = creating_segments(input_data, storage)
 
+        assert result.error == []
         assert result.formation is not None
-        assert len(result.formation.segment) == 2
+        assert len(result.formation.segment) == 1
 
-        saved_segment_paths = [segment.value.file.path for segment in result.formation.segment]
-        saved_jsons = [json.loads(Path(path).read_text(encoding='utf-8')) for path in saved_segment_paths]
+        saved_path = Path(result.formation.segment[0].value.file.path)
+        saved_data = json.loads(saved_path.read_text(encoding='utf-8'))
 
-        reconstructed_polygons = []
-        for saved_json in saved_jsons:
-            shell = [(point['x'], point['y']) for point in saved_json['lines'][0]['points']]
-            holes = [[(point['x'], point['y']) for point in line['points']] for line in saved_json['lines'][1:]]
-            reconstructed_polygons.append(Polygon(shell=shell, holes=holes))
-
-        outer_polygon = next(polygon for polygon in reconstructed_polygons if len(polygon.interiors) == 1)
-        inner_polygon = next(polygon for polygon in reconstructed_polygons if len(polygon.interiors) == 0)
-
-        assert len(outer_polygon.interiors) == 1
-        assert abs(inner_polygon.area - 3600.0) < 1e-9
-        assert abs(outer_polygon.area - (10000.0 - 3600.0)) < 1e-9
-
+        assert len(saved_data['lines']) == 3
 
 def test_process_intersections_zero_keeps_old_behavior():
     outer = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
@@ -997,7 +986,7 @@ def test_creating_segments_process_intersections_one_rebuilds_overlap_in_pipelin
 
         assert result.error == []
         assert result.formation is not None
-        assert len(result.formation.segment) == 2
+        assert len(result.formation.segment) == 1
 
 
 def test_creating_segments_process_intersections_one_keeps_independent_polygon_with_containment():
@@ -1032,6 +1021,7 @@ def test_creating_segments_process_intersections_one_keeps_independent_polygon_w
             },
         ],
     }
+
     with TemporaryDirectory(prefix='test_intersections_one_mixed') as base_dir_str:
         base_dir = Path(base_dir_str)
         polygon_path = base_dir / 'polygon.json'
@@ -1049,24 +1039,18 @@ def test_creating_segments_process_intersections_one_keeps_independent_polygon_w
             'polygon': {'id': '12', 'name': 'Полигон', 'value': {'file': {'path': str(polygon_path)}}},
             'formation': {'name': 'пласт'},
         }
+
         input_data = CalculationInput.model_validate(raw_input)
         result = creating_segments(input_data, storage)
 
+        assert result.error == []
         assert result.formation is not None
-        assert len(result.formation.segment) == 3
+        assert len(result.formation.segment) == 1
 
-        saved_segment_paths = [segment.value.file.path for segment in result.formation.segment]
-        saved_jsons = [json.loads(Path(path).read_text(encoding='utf-8')) for path in saved_segment_paths]
-        reconstructed_polygons = []
-        for saved_json in saved_jsons:
-            shell = [(point['x'], point['y']) for point in saved_json['lines'][0]['points']]
-            holes = [[(point['x'], point['y']) for point in line['points']] for line in saved_json['lines'][1:]]
-            reconstructed_polygons.append(Polygon(shell=shell, holes=holes))
+        saved_path = Path(result.formation.segment[0].value.file.path)
+        saved_data = json.loads(saved_path.read_text(encoding='utf-8'))
 
-        assert len([polygon for polygon in reconstructed_polygons if len(polygon.interiors) == 1]) == 1
-        assert len([polygon for polygon in reconstructed_polygons if len(polygon.interiors) == 0]) == 2
-        assert any(abs(polygon.area - 400.0) < 1e-9 for polygon in reconstructed_polygons)
-
+        assert len(saved_data['lines']) == 4
 
 def test_creating_segments_routes_by_process_intersections(monkeypatch):
     calls: list[str] = []
@@ -1216,6 +1200,7 @@ def test_creating_segments_saves_polygon_with_multiple_holes():
             },
         ],
     }
+
     with TemporaryDirectory(prefix='test_multi_holes') as base_dir_str:
         base_dir = Path(base_dir_str)
         polygon_path = base_dir / 'polygon.json'
@@ -1233,22 +1218,25 @@ def test_creating_segments_saves_polygon_with_multiple_holes():
             'polygon': {'id': '12', 'name': 'Полигон', 'value': {'file': {'path': str(polygon_path)}}},
             'formation': {'name': 'пласт'},
         }
+
         input_data = CalculationInput.model_validate(raw_input)
         result = creating_segments(input_data, storage)
 
+        assert result.error == []
         assert result.formation is not None
-        saved_segment_paths = [segment.value.file.path for segment in result.formation.segment]
-        saved_jsons = [json.loads(Path(path).read_text(encoding='utf-8')) for path in saved_segment_paths]
+        assert len(result.formation.segment) == 1
 
-        reconstructed_polygons = []
-        for saved_json in saved_jsons:
-            shell = [(point['x'], point['y']) for point in saved_json['lines'][0]['points']]
-            holes = [[(point['x'], point['y']) for point in line['points']] for line in saved_json['lines'][1:]]
-            reconstructed_polygons.append(Polygon(shell=shell, holes=holes))
+        saved_path = Path(result.formation.segment[0].value.file.path)
+        saved_data = json.loads(saved_path.read_text(encoding='utf-8'))
 
-        outer_polygon = next(polygon for polygon in reconstructed_polygons if len(polygon.interiors) == 2)
-        assert abs(outer_polygon.area - (120 * 120 - 20 * 20 - 20 * 20)) < 1e-9
+        assert len(saved_data['lines']) == 5
 
+        line_areas = []
+        for saved_line in saved_data['lines']:
+            coords = [(point['x'], point['y']) for point in saved_line['points']]
+            line_areas.append(abs(Polygon(coords).area))
+
+        assert sorted(line_areas) == [400.0, 400.0, 400.0, 400.0, 14400.0]
 
 def test_two_points_branch_handles_numerically_computed_intersection_point():
     """
@@ -1306,3 +1294,73 @@ def test_many_points_branch_keeps_three_segments_for_vertical_strip_case():
         for second_index in range(first_index + 1, len(result)):
             overlap_area = result[first_index].intersection(result[second_index]).area
             assert overlap_area <= BOUNDARY_TOUCH_AREA_TOLERANCE
+
+def test_creating_segments_removes_duplicate_lines_by_edges():
+    polygon_payload = {
+        "lines": [
+            {
+                "points": [
+                    {"x": 0, "y": 0},
+                    {"x": 0, "y": 100},
+                    {"x": 100, "y": 100},
+                    {"x": 100, "y": 0},
+                    {"x": 0, "y": 0},
+                ],
+            },
+            {
+                "points": [
+                    {"x": 100, "y": 100},
+                    {"x": 100, "y": 0},
+                    {"x": 0, "y": 0},
+                    {"x": 0, "y": 100},
+                    {"x": 100, "y": 100},
+                ],
+            },
+            {
+                "points": [
+                    {"x": 0, "y": 0},
+                    {"x": 100, "y": 0},
+                    {"x": 100, "y": 100},
+                    {"x": 0, "y": 100},
+                    {"x": 0, "y": 0},
+                ],
+            },
+        ],
+    }
+
+    with TemporaryDirectory(prefix="test_duplicate_lines") as base_dir_str:
+        base_dir = Path(base_dir_str)
+        polygon_path = base_dir / "polygon.json"
+        polygon_path.write_text(json.dumps(polygon_payload), encoding="utf-8")
+
+        storage = Storage(base_dir=base_dir)
+
+        raw_input = {
+            "parameter": {
+                "name_by": "Имени полигона",
+                "segments_group": "1",
+                "segments_type": "2",
+                "merge_radius": 0,
+                "process_intersections": 1,
+            },
+            "polygon": {
+                "id": "12",
+                "name": "Полигон",
+                "value": {"file": {"path": str(polygon_path)}},
+            },
+            "formation": {"name": "пласт"},
+        }
+
+        input_data = CalculationInput.model_validate(raw_input)
+        result = creating_segments(input_data, storage)
+
+        assert result.error == []
+        assert result.formation is not None
+        assert len(result.formation.segment) == 1
+        assert any("дубли" in warning.lower() or "повтор" in warning.lower() for warning in result.warning)
+
+        saved_path = Path(result.formation.segment[0].value.file.path)
+        saved_data = json.loads(saved_path.read_text(encoding="utf-8"))
+
+        assert len(saved_data["lines"]) == 1
+        assert saved_data["lines"][0]["points"] == polygon_payload["lines"][0]["points"]
