@@ -12,139 +12,22 @@ from .models.enumirations import (
 from .models.creating_segments import CalculationInput
 from .models.creating_segments import CalculationResult
 from .models.creating_segments import FormationResult
-from .models.creating_segment import File
-from .models.creating_segments import Line
 from .models.creating_segments import PolygonLine
-from .models.creating_segments import PolygonValue
-from .models.creating_segments import Segment
-from .models.creating_segments import TargetPoint
 from .intersection_handlers.containment_handler import ContainmentHandler
 from .intersection_handlers.many_points_overlap_handler import ManyPointsOverlapHandler
 from .intersection_handlers.two_points_overlap_handler import TwoPointsOverlapHandler
 
-CALCULATION_NAME = 'Расчёт сегментов\n'
+from .constants import BOUNDARY_TOUCH_AREA_TOLERANCE
+from .constants import CALCULATION_NAME
+from .constants import PERIMETER_AREA_THRESHOLD
+from .constants import POINT_DEDUP_TOLERANCE
+from .constants import SHARED_EDGE_TOLERANCE
+from .polygon_input_validation import remove_duplicate_lines_by_edges
+from .polygon_input_validation import validate_and_process_lines
+from .polygon_serialization import polygon_to_polygon_line
+from .polygon_serialization import save_polygons_as_single_segment
 
 logger = logging.getLogger('creating_segment_calculation_module')
-POINT_DEDUP_TOLERANCE = 1e-9
-SHARED_EDGE_TOLERANCE = 1e-9
-# Допуск на «нулевую» площадь пересечения.
-# Два полигона с общей стороной теоретически пересекаются по линии (area == 0),
-# но из-за погрешности double shapely может возвращать микроскопическую
-# ненулевую площадь. При типичном масштабе координат задачи (~1e4) и длинах
-# сторон ~1e3 шум на общей границе даёт ложную площадь до ~1e-6. Значение 1e-5
-# надёжно покрывает этот шум с небольшим запасом и при этом много меньше
-# площади любого геометрически осмысленного пересечения (минимум в тестах —
-# 5000, запас >8 порядков).
-BOUNDARY_TOUCH_AREA_TOLERANCE = 1e-5
-PERIMETER_AREA_THRESHOLD = 0.5
-
-
-def _point_key(point: TargetPoint) -> tuple[float, float]:
-    return point.x, point.y
-
-
-def _edge_key(
-    first_point: TargetPoint,
-    second_point: TargetPoint,
-) -> tuple[tuple[float, float], tuple[float, float]]:
-    first_key = _point_key(first_point)
-    second_key = _point_key(second_point)
-    if first_key <= second_key:
-        return first_key, second_key
-    return second_key, first_key
-
-
-def _line_edges_key(line: Line) -> frozenset[tuple[tuple[float, float], tuple[float, float]]]:
-    edges: list[tuple[tuple[float, float], tuple[float, float]]] = []
-    for point_index in range(len(line.points) - 1):
-        first_point = line.points[point_index]
-        second_point = line.points[point_index + 1]
-        edges.append(_edge_key(first_point, second_point))
-
-    return frozenset(edges)
-
-
-def remove_duplicate_lines_by_edges(polygon_line: PolygonLine, polygon_name: str) -> tuple[PolygonLine, list[str]]:
-    unique_lines: list[Line] = []
-    seen_line_keys: set[frozenset[tuple[tuple[float, float], tuple[float, float]]]] = set()
-    warning_messages: list[str] = []
-    removed_lines_count = 0
-    removed_lines_indices: list[int] = []
-
-    for line_index, line in enumerate(polygon_line.lines):
-        if len(line.points) < 2:
-            unique_lines.append(line)
-            continue
-
-        first_point = line.points[0]
-        last_point = line.points[-1]
-        if (first_point.x != last_point.x) or (first_point.y != last_point.y):
-            unique_lines.append(line)
-            continue
-
-        line_key = _line_edges_key(line)
-        if line_key in seen_line_keys:
-            removed_lines_count += 1
-            removed_lines_indices.append(line_index + 1)
-            continue
-
-        seen_line_keys.add(line_key)
-        unique_lines.append(line)
-
-    if removed_lines_count > 0:
-        removed_indices = ', '.join(str(line_index) for line_index in removed_lines_indices)
-        warning_messages.append(
-            f'{CALCULATION_NAME}'
-            f'Полигон {polygon_name} содержит повторяющиеся замкнутые полилинии: '
-            f'удалено {removed_lines_count} шт. (индексы: {removed_indices}).',
-        )
-
-    return PolygonLine(lines=unique_lines), warning_messages
-
-
-def validate_and_process_lines(polygon_line: PolygonLine, polygon_name: str) -> tuple[list[Polygon], list[str]]:
-    """Проверяет линии на валидность и преобразует в полигоны"""
-    valid_polygons = []
-    warnings = []
-
-    for i, line in enumerate(polygon_line.lines):
-        points = line.points
-
-        # Проверка количества точек
-        if len(points) < 4:
-            warnings.append(
-                f'{CALCULATION_NAME}'
-                f'Полигон {polygon_name} в параметре Внешний контур содержит 3 или менее точек, расчёт будет выполнен без их учёта',
-            )
-            continue
-
-        # Проверка замкнутости
-        first_point = points[0]
-        last_point = points[-1]
-        if (first_point.x != last_point.x) or (first_point.y != last_point.y):
-            warnings.append(
-                f'{CALCULATION_NAME}'
-                f'Полигон {polygon_name} в параметре Внешний контур имеет незамкнутые полилинии, расчёт будет выполнен без их учёта',
-            )
-            continue
-
-        # Создание полигона Shapely
-        try:
-            poly = Polygon([(p.x, p.y) for p in points])
-            if not poly.is_valid:
-                warnings.append(
-                    f'{CALCULATION_NAME}'
-                    f'Полигон {polygon_name}: Полилиния {i + 1} имеет некорректную геометрию - исключена',
-                )
-                continue
-
-            valid_polygons.append(poly)
-        except Exception:
-            warnings.append(
-                f'{CALCULATION_NAME}Полигон {polygon_name}: Неизвестная ошибка создания полилинии {i + 1} - исключена',
-            )
-
-    return valid_polygons, warnings
 
 
 def clip_to_model_border(
@@ -781,57 +664,6 @@ def merge_by_radius(
         result_polygons.append(updated_polygon)
 
     return result_polygons, warnings, infos
-
-
-def polygon_to_polygon_line(polygon: Polygon) -> PolygonLine:
-    """Преобразует Shapely Polygon в PolygonLine с учётом внутренних контуров."""
-    lines: list[Line] = []
-
-    exterior_points = [TargetPoint(x=coord[0], y=coord[1]) for coord in polygon.exterior.coords]
-    lines.append(Line(points=exterior_points))
-
-    for interior in polygon.interiors:
-        interior_points = [TargetPoint(x=coord[0], y=coord[1]) for coord in interior.coords]
-        lines.append(Line(points=interior_points))
-
-    return PolygonLine(lines=lines)
-
-
-def save_polygons_as_single_segment(
-    polygons: list[Polygon],
-    input_data: CalculationInput,
-    storage,
-) -> list[Segment]:
-    """Сохраняет все полигоны в один json-файл формата входных данных."""
-    all_lines: list[dict] = []
-
-    for polygon in polygons:
-        polygon_line = polygon_to_polygon_line(polygon)
-        polygon_data = polygon_line.model_dump()
-        polygon_lines = polygon_data["lines"]
-        all_lines.extend(polygon_lines)
-
-    content = json.dumps({"lines": all_lines}, ensure_ascii=False, indent=2)
-
-    base_name = input_data.polygon.name
-    safe_name = "".join(char for char in base_name if char.isalnum() or char in " _-")
-    if not safe_name:
-        safe_name = "segments"
-
-    file_path = storage.get_temp_dir() / f"{safe_name}_{input_data.parameter.segments_type}.json"
-
-    with open(file_path, "w", encoding="utf-8") as file:
-        file.write(content)
-
-    segment = Segment(
-        group=input_data.parameter.segments_group,
-        type=input_data.parameter.segments_type,
-        name=base_name,
-        value=PolygonValue(file=File(path=str(file_path))),
-        polygon_id=input_data.polygon.id,
-    )
-    return [segment]
-
 
 
 def generate_combined_name(well_names: list[str], name_counter: dict[str, int]):
