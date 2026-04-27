@@ -5,7 +5,7 @@ from shapely.geometry import Polygon
 from .models.creating_segments import CalculationInput
 
 
-def generate_combined_name(well_names: list[str], name_counter: dict[str, int]):
+def generate_combined_name(well_names: list[str], name_counter: dict[str, int]) -> str:
     """Генерируем имя сегманта."""
     if not well_names:
         base = 'Сегмент'
@@ -26,7 +26,7 @@ def generate_combined_name(well_names: list[str], name_counter: dict[str, int]):
 
 def get_well_in_segment(input_data: CalculationInput, polygon: Polygon) -> list[str]:
     """Определяет скважины, принадлежащие сегменту"""
-    well_names = []
+    well_names: list[str] = []
     for well in input_data.well:
         # Для скважин с одной точкой
         if len(well.target.point) == 1:

@@ -12,8 +12,8 @@ def clip_to_model_border(
     if model_border is None:
         return polygons, []
 
-    result_polygons = []
-    warnings = []
+    result_polygons: list[Polygon] = []
+    warnings: list[str] = []
 
     for i, poly in enumerate(polygons):
         # Проверка отношения к контуру модели
