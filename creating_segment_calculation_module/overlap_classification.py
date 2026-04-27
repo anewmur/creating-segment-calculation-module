@@ -129,9 +129,13 @@ def classify_significant_overlaps(
         if len(vertex_info) == 4 and shared_boundary_vertex_count == 2 and inside_vertex_count == 2:
             # Дополнительная проверка: нет общего отрезка границы
             boundary_cross = first_polygon.boundary.intersection(second_polygon.boundary)
+            boundary_geometries: list[BaseGeometry] = [boundary_cross]
+            if boundary_cross.geom_type in {"GeometryCollection", "MultiLineString"}:
+                boundary_geometries = list(boundary_cross.geoms)
+
             has_linear = any(
-                g.geom_type in ("LineString", "MultiLineString")
-                for g in (boundary_cross.geoms if hasattr(boundary_cross, "geoms") else [boundary_cross])
+                geometry.geom_type in {"LineString", "MultiLineString"}
+                for geometry in boundary_geometries
             )
             if not has_linear:
                 return OverlapClassification(
