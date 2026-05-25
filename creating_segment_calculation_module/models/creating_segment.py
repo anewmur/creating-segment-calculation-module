@@ -2,11 +2,7 @@
 
 from enum import Enum
 
-# from nedra_calculate_ontology.ontology_model import File
-from tests.viz_test.utils import File
-
-
-
+from nedra_calculate_ontology.ontology_model import File
 from pydantic import BaseModel
 
 
@@ -27,7 +23,6 @@ class SegmentType(Enum):
 
 class PolygonValue(BaseModel):
     """Схема значения полигона."""
-
     file: File
 
 
