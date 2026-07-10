@@ -65,7 +65,7 @@ class Parameter(BaseModel):
     gs_part: float | None = Field(None, description='Процент вхождения ГС в сегмент')
     segments_group: str = Field(..., description='Группа сегментов')
     segments_type: str = Field(..., description='Тип сегментов')
-    merge_radius: float = Field(..., description='Радиус склейки, м')
+    merge_radius: float = Field(20, description='Радиус склейки, м')
     process_intersections: int = Field(
         default=1,
         description='Флаг обработки пересечений: 0 - исключать, 1 - перестраивать',

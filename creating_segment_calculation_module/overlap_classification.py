@@ -92,6 +92,7 @@ def classify_significant_overlaps(
         return OverlapClassification(case=OverlapCase.no_overlap)
 
     for overlap_polygon in significant_overlaps:
+        #  список углов зоны перекрытия - все вершины контура зоны, кроме замыкающей
         vertex_info = classify_overlap_vertices(
             overlap_polygon=overlap_polygon,
             first_polygon=first_polygon,
@@ -114,18 +115,22 @@ def classify_significant_overlaps(
             else:
                 inside_vertex_count += 1
 
-        # Вложенность
+        # inside_vertex_count - сколько вершин не являются общими
+
+        #  сколько вершин лежат на границе полигонов
         if shared_boundary_vertex_count == 0:
             return OverlapClassification(case=OverlapCase.all_points_inside_one_polygon)
 
-        # Треугольный оверлап (3 вершины, 2 общие, 1 внутренняя)
+        # Треугольныое перекрытие (3 вершины, 2 общие, 1 внутренняя)
+
         if len(vertex_info) == 3 and shared_boundary_vertex_count == 2 and inside_vertex_count == 1:
             return OverlapClassification(
                 case=OverlapCase.candidate_block_4,
                 shared_boundary_vertices=(shared_boundary_vertices[0], shared_boundary_vertices[1]),
             )
 
-        # Четырёхугольный оверлап (4 вершины, 2 общие, 2 внутренние) – например, два квадрата
+
+        # Четырёхугольное перекрытие (4 вершины, 2 общие, 2 внутренние) – например, два квадрата
         if len(vertex_info) == 4 and shared_boundary_vertex_count == 2 and inside_vertex_count == 2:
             # Дополнительная проверка: нет общего отрезка границы
             boundary_cross = first_polygon.boundary.intersection(second_polygon.boundary)
@@ -142,6 +147,17 @@ def classify_significant_overlaps(
                     case=OverlapCase.candidate_block_4,
                     shared_boundary_vertices=(shared_boundary_vertices[0], shared_boundary_vertices[1]),
                 )
+
+        # Разрез одной прямой между двумя общими точками: сколько бы ни было
+        # внутренних вершин (например, дуга дискретизированной окружности),
+        # при ровно двух общих граничных точках пара режется block 4.
+        # Если разрез не пройдёт валидацию хендлера — вернётся False и
+        # диспетчер откатит пару в block 5 как fallback.
+        if shared_boundary_vertex_count == 2:
+            return OverlapClassification(
+                case=OverlapCase.candidate_block_4,
+                shared_boundary_vertices=(shared_boundary_vertices[0], shared_boundary_vertices[1]),
+            )
 
         # Все остальные случаи (больше 4 вершин, больше 2 общих вершин, общий отрезок) → блок 5
         if len(vertex_info) > 3 or shared_boundary_vertex_count > 2:

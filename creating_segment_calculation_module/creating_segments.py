@@ -11,6 +11,7 @@ from nedra_calculate_sdk.models import Messages
 from shapely.geometry import Polygon
 from creating_segment_calculation_module.border_clipping import clip_to_model_border
 from creating_segment_calculation_module.constants import CALCULATION_NAME
+from creating_segment_calculation_module.constants import BOUNDARY_TOUCH_AREA_TOLERANCE
 from creating_segment_calculation_module.intersection_processing import check_intersections
 from creating_segment_calculation_module.intersection_processing import process_intersections_rebuild
 from creating_segment_calculation_module.models.creating_segments import CalculationInput
@@ -175,6 +176,7 @@ def creating_segments(input_data: CalculationInput, storage) -> CalculationResul
                 f"Расчёт не выполнен.",
             )
             return _build_result(None, info_msgs, warning_msgs, error_msgs)
+
 
         segments = save_polygons_as_segments(polygons, input_data, storage)
         info_msgs.append(f'{CALCULATION_NAME}Успешно создано сегментов: {len(segments)}')

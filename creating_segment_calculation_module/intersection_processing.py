@@ -149,7 +149,6 @@ def process_intersections_rebuild(
     current_polygons = list(polygons)
     excluded_indexes: set[int] = set()
     # Поздний импорт нужен для обратной совместимости monkeypatch через фасад creating_segments.
-    # Не переносить на уровень модуля: будет циклический импорт и сломаются старые patch-точки.
     from . import creating_segments
 
     while True:
@@ -204,7 +203,9 @@ def process_intersections_rebuild(
                         continue
                     # Защита от рассинхрона: если handler вернул not_containment, идём в fallback ниже.
 
-                # «Чистое» пересечение для block 4: две граничные вершины уже определены классификатором.
+                # зону перекрытия можно разрезать одной прямой линией на две части и раздать полигонам, ничего не потеряв.
+                # классификатор (_classify_pair) разбирал зону перекрытия, он нашёл ровно две точки,
+                # которые лежат на границе обоих полигонов сразу, и положил их в classification.shared_boundary_vertices
                 if classification.case == OverlapCase.candidate_block_4:
                     if classification.shared_boundary_vertices is not None:
                         first_vertex, second_vertex = classification.shared_boundary_vertices
@@ -219,7 +220,8 @@ def process_intersections_rebuild(
                             # Длина списка не изменилась, можно идти к следующей паре.
                             continue
 
-                # Fallback на block 5: handler может изменить длину списка полигонов.
+                # Запасной способ, если чистый разрез не сработал. Например пересечение такое,
+                # что точки полилиний не лежат на границе
                 many_points_rebuilt = handle_many_points_intersection(
                     polygons=current_polygons,
                     first_index=first_polygon_index,
