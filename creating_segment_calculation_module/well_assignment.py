@@ -31,7 +31,7 @@ def get_well_in_segment(input_data: CalculationInput, polygon: Polygon) -> list[
         # Для скважин с одной точкой
         if len(well.target.point) == 1:
             point = Point(well.target.point[0].x, well.target.point[0].y)
-            if polygon.contains(point):
+            if polygon.contains(point) or polygon.touches(point):
                 well_names.append(well.name)
 
         # Для скважин с двумя точками

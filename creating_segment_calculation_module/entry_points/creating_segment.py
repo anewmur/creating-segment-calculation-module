@@ -8,7 +8,6 @@ from creating_segment_calculation_module.creating_segment import creating_segmen
 from creating_segment_calculation_module.models.creating_segment import CalculationInput
 from creating_segment_calculation_module.models.creating_segment import CalculationResult
 
-
 def calculate(input_data: CalculationInput, /, **kwargs) -> CalculationResult:
     """Модуль для создания сегментов.
 

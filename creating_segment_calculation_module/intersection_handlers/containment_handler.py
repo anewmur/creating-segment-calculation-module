@@ -6,6 +6,10 @@ from ..models.enumirations import ContainmentHandlingResult, ContainmentHandling
 class ContainmentHandler:
     """Обрабатывает вложенность полигонов."""
 
+    def _rebuild_outer_polygon_for_containment(self, outer_polygon: Polygon, inner_polygon: Polygon):
+        """Исключает внутренний полигон из внешнего, формируя отверстие."""
+        return outer_polygon.difference(inner_polygon)
+
     def handle(
         self,
         polygons: list[Polygon],
@@ -25,14 +29,9 @@ class ContainmentHandler:
         else:
             return ContainmentHandlingResult(status=ContainmentHandlingStatus.not_containment)
 
-        # Импорт внутри метода — поздний binding, чтобы monkeypatch
-        # `creating_segments._rebuild_outer_polygon_for_containment`
-        # работал в тестах.
-        from ..creating_segments import _rebuild_outer_polygon_for_containment
-
         outer_polygon = polygons[outer_index]
         inner_polygon = polygons[inner_index]
-        rebuilt_outer = _rebuild_outer_polygon_for_containment(outer_polygon, inner_polygon)
+        rebuilt_outer = self._rebuild_outer_polygon_for_containment(outer_polygon, inner_polygon)
 
         if (
             rebuilt_outer.is_empty

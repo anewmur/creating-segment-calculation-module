@@ -70,45 +70,56 @@ def remove_duplicate_lines_by_edges(polygon_line: PolygonLine, polygon_name: str
 
 
 def validate_and_process_lines(polygon_line: PolygonLine, polygon_name: str) -> tuple[list[Polygon], list[str]]:
-    """Проверяет линии на валидность и преобразует в полигоны"""
+    """Проверяет линии на валидность и преобразует валидные линии в полигоны."""
     valid_polygons: list[Polygon] = []
     warnings: list[str] = []
+    short_line_indices: list[int] = []
+    open_line_indices: list[int] = []
 
-    for i, line in enumerate(polygon_line.lines):
+    for line_index, line in enumerate(polygon_line.lines):
         points = line.points
 
-        # Проверка количества точек
         if len(points) < 4:
-            warnings.append(
-                f'{CALCULATION_NAME}'
-                f'Полигон {polygon_name} в параметре Внешний контур содержит 3 или менее точек, расчёт будет выполнен без их учёта',
-            )
+            short_line_indices.append(line_index + 1)
             continue
 
-        # Проверка замкнутости
         first_point = points[0]
         last_point = points[-1]
         if (first_point.x != last_point.x) or (first_point.y != last_point.y):
-            warnings.append(
-                f'{CALCULATION_NAME}'
-                f'Полигон {polygon_name} в параметре Внешний контур имеет незамкнутые полилинии, расчёт будет выполнен без их учёта',
-            )
+            open_line_indices.append(line_index + 1)
             continue
 
-        # Создание полигона Shapely
         try:
-            poly = Polygon([(p.x, p.y) for p in points])
-            if not poly.is_valid:
+            polygon = Polygon([(point.x, point.y) for point in points])
+            if not polygon.is_valid:
                 warnings.append(
                     f'{CALCULATION_NAME}'
-                    f'Полигон {polygon_name}: Полилиния {i + 1} имеет некорректную геометрию - исключена',
+                    f'Полигон {polygon_name}: Полилиния {line_index + 1} имеет некорректную геометрию - исключена',
                 )
                 continue
 
-            valid_polygons.append(poly)
+            valid_polygons.append(polygon)
         except Exception:
             warnings.append(
-                f'{CALCULATION_NAME}Полигон {polygon_name}: Неизвестная ошибка создания полилинии {i + 1} - исключена',
+                f'{CALCULATION_NAME}'
+                f'Полигон {polygon_name}: Неизвестная ошибка создания полилинии {line_index + 1} - исключена',
             )
+
+    if short_line_indices:
+        indices = ', '.join(str(line_index) for line_index in short_line_indices)
+        warnings.append(
+            f'{CALCULATION_NAME}'
+            f'Полигон {polygon_name} в параметре Внешний контур содержит полилинии '
+            f'с 3 или менее точками: индексы {indices}. '
+            f'Расчёт будет выполнен без их учёта',
+        )
+
+    if open_line_indices:
+        indices = ', '.join(str(line_index) for line_index in open_line_indices)
+        warnings.append(
+            f'{CALCULATION_NAME}'
+            f'Полигон {polygon_name} в параметре Внешний контур содержит незамкнутые полилинии: '
+            f'индексы {indices}. Расчёт будет выполнен без их учёта',
+        )
 
     return valid_polygons, warnings

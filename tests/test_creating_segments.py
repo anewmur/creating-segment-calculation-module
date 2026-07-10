@@ -1,4 +1,4 @@
-import json
+﻿import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -136,6 +136,7 @@ def test_check_intersections_excludes_real_overlap_but_keeps_tiny_numerical_over
         [overlapping_first, overlapping_second],
         'Полигон',
     )
+
     kept_polygons, tiny_warnings = check_intersections(
         [almost_touching_first, almost_touching_second],
         'Полигон',
@@ -171,14 +172,12 @@ def test_creating_segments_clips_by_model_border_and_saves_only_inside_part():
         result = creating_segments(input_data, Storage(base_dir=base_dir))
         saved_json = _read_saved_jsons(result)[0]
 
-    assert result.error == []
-    assert len(result.warning) == 1
-    assert result.info == ['Расчёт сегментов\nУспешно создано сегментов: 1']
+    assert result.messages.error == []
+    assert len(result.messages.warning) == 1
+    assert result.messages.info == ['Расчёт сегментов\nУспешно создано сегментов: 1']
     assert saved_json == _polygon_payload([
         [(0.0, 0.0), (0.0, 500.0), (500.0, 500.0), (500.0, 0.0), (0.0, 0.0)],
     ])
-
-
 def test_creating_segments_removes_duplicate_closed_lines_by_edges():
     duplicate_payload = _polygon_payload([
         [(0, 0), (0, 100), (100, 100), (100, 0), (0, 0)],
@@ -197,13 +196,41 @@ def test_creating_segments_removes_duplicate_closed_lines_by_edges():
         )
         saved_json = _read_saved_jsons(result)[0]
 
-    assert result.error == []
+    assert result.messages.error == []
     assert len(result.formation.segment) == 1
     assert saved_json == _polygon_payload([
         [(0, 0), (0, 100), (100, 100), (100, 0), (0, 0)],
     ])
-    assert any('повтор' in warning.lower() or 'дубли' in warning.lower() for warning in result.warning)
+    assert any(
+        'повтор' in warning.lower() or 'дубли' in warning.lower()
+        for warning in result.messages.warning
+    )
 
+
+def test_creating_segments_saves_each_result_polygon_as_separate_segment():
+    polygon_payload = _polygon_payload([
+        [(0, 0), (0, 100), (100, 100), (100, 0), (0, 0)],
+        [(200, 0), (200, 100), (300, 100), (300, 0), (200, 0)],
+    ])
+
+    with TemporaryDirectory(prefix='test_separate_segments') as base_dir_str:
+        base_dir = Path(base_dir_str)
+        polygon_path = base_dir / 'polygon.json'
+        _write_json(polygon_path, polygon_payload)
+
+        result = creating_segments(
+            _calculation_input(polygon_path),
+            Storage(base_dir=base_dir),
+        )
+
+        assert result.messages.error == []
+        assert len(result.formation.segment) == 2
+        assert result.formation.segment[0].name == 'Полигон'
+        assert result.formation.segment[1].name == 'Полигон (1)'
+        assert result.messages.info == ['Расчёт сегментов\nУспешно создано сегментов: 2']
+        assert Path(result.formation.segment[0].value.file.path).exists()
+        assert Path(result.formation.segment[1].value.file.path).exists()
+        assert result.formation.segment[0].value.file.path != result.formation.segment[1].value.file.path
 
 def test_process_intersections_rebuild_containment_keeps_inner_and_makes_hole():
     outer = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
@@ -220,6 +247,40 @@ def test_process_intersections_rebuild_containment_keeps_inner_and_makes_hole():
     assert abs(preserved_inner.area - inner.area) < 1e-9
     _assert_no_area_overlaps(result)
 
+
+def test_creating_segments_names_segments_by_well_name():
+    polygon_payload = _polygon_payload([
+        [(0, 0), (0, 100), (100, 100), (100, 0), (0, 0)],
+        [(200, 0), (200, 100), (300, 100), (300, 0), (200, 0)],
+    ])
+
+    with TemporaryDirectory(prefix='test_segments_by_well_name') as base_dir_str:
+        base_dir = Path(base_dir_str)
+        polygon_path = base_dir / 'polygon.json'
+        _write_json(polygon_path, polygon_payload)
+
+        raw_input = _calculation_input(polygon_path).model_dump()
+        raw_input['parameter']['name_by'] = 'Имени ствола'
+        raw_input['well'] = [
+            {
+                'name': 'Скв1',
+                'target': {
+                    'point': [
+                        {'x': 50, 'y': 50},
+                    ],
+                },
+            },
+        ]
+
+        result = creating_segments(
+            CalculationInput.model_validate(raw_input),
+            Storage(base_dir=base_dir),
+        )
+
+    assert result.messages.error == []
+    assert len(result.formation.segment) == 2
+    assert result.formation.segment[0].name == 'Скв1'
+    assert result.formation.segment[1].name == 'Сегмент'
 
 def test_two_points_rebuild_splits_overlap_without_losing_union_area():
     square_left = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
@@ -371,7 +432,7 @@ def test_process_intersections_zero_excludes_overlap_in_pipeline():
         )
 
     assert result.formation is None
-    assert result.error == [
+    assert result.messages.error == [
         "Расчёт сегментов\nВсе полилинии полигона 'Полигон' исключены из-за пересечений. Расчёт не выполнен.",
     ]
 
@@ -396,9 +457,9 @@ def test_process_intersections_one_rebuilds_overlap_in_pipeline():
             for saved_json in _read_saved_jsons(result)
         ]
 
-    assert result.error == []
-    assert len(polygons) == 1
-    assert len(polygons[0].interiors) == 1
+    assert result.messages.error == []
+    assert len(polygons) == 2
+    _assert_no_area_overlaps(polygons)
     _assert_no_area_overlaps(polygons)
 
 

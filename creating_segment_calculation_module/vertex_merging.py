@@ -116,7 +116,7 @@ def merge_by_radius(
 
     vertices = _collect_polygon_vertices(polygons)
     planned_moves: dict[tuple[int, int], tuple[float, float]] = {}
-    has_skip_info = False
+    skipped_polygon_indices: set[int] = set()
     radius_squared = merge_radius * merge_radius
 
     for base_polygon_index, base_vertex_index, base_x, base_y in vertices:
@@ -132,7 +132,7 @@ def merge_by_radius(
             continue
 
         if any(hit_count > 1 for hit_count in neighbor_counts.values()):
-            has_skip_info = True
+            skipped_polygon_indices.add(base_polygon_index)
             continue
 
         group, avg_x, avg_y = _build_merge_group(
@@ -144,11 +144,16 @@ def merge_by_radius(
         )
         _register_planned_moves(group, avg_x, avg_y, planned_moves)
 
-    if has_skip_info:
+    if skipped_polygon_indices:
+        sorted_indices = sorted(skipped_polygon_indices)
+        joined_indices = ', '.join(str(index) for index in sorted_indices)
+
         infos.append(
             f'{CALCULATION_NAME}'
-            f'Для некоторых полилиний полигона {polygon_name} в радиус склейки входит более 1 точки одной полилинии. '
-            f'Склейка не будет выполнена.',
+            f'Для полилиний полигона {polygon_name} '
+            f'с индексами {joined_indices} '
+            f'в радиус склейки входит более 1 точки одной полилинии. '
+            f'Склейка для них не выполнена.',
         )
 
     if not planned_moves:
@@ -171,7 +176,8 @@ def merge_by_radius(
         if not updated_polygon.is_valid or not updated_polygon.is_simple:
             warnings.append(
                 f'{CALCULATION_NAME}'
-                f'Полилиния полигона {polygon_name} исключена из расчёта из-за самопересечения после склейки.',
+                f'Полилиния полигона {polygon_name} с индексом {polygon_index} '
+                f'исключена из расчёта из-за самопересечения после склейки.',
             )
             continue
 
